@@ -186,7 +186,8 @@ class AiErrorContractTest {
     @DisplayName("chat: 정의되지 않은 scenario → 400 + field=scenario")
     void chatInvalidScenario() throws Exception {
         mvc.perform(multipart(CHAT).file(audio("a.m4a", 100))
-                        .param("scenario", "NOPE").param("history", "[]"))
+                        .param("scenario", "NOPE").param("history", "[]")
+                        .param("nickname", "민수"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.field").value("scenario"));
     }
@@ -222,32 +223,32 @@ class AiErrorContractTest {
     }
 
     @Test
-    @DisplayName("chat: nickname을 생략하면 파트를 아예 만들지 않는다")
-    void chatOmitsNicknameWhenAbsent() throws Exception {
-        given(inferenceClient.postMultipartChat(anyString(), any())).willReturn("{\"success\":true}");
-
+    @DisplayName("chat: nickname을 생략하면 400 + field=nickname")
+    void chatRequiresNickname() throws Exception {
         mvc.perform(multipart(CHAT).file(audio("a.m4a", 100))
                         .param("scenario", "LUNCH").param("history", "[]"))
-                .andExpect(status().isOk());
-
-        ArgumentCaptor<MultiValueMap<String, Object>> captor = ArgumentCaptor.forClass(MultiValueMap.class);
-        verify(inferenceClient).postMultipartChat(anyString(), captor.capture());
-        assertThat(captor.getValue().containsKey("nickname")).isFalse();
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_PARAMETER"))
+                .andExpect(jsonPath("$.error.field").value("nickname"));
     }
 
     @Test
-    @DisplayName("chat: nickname이 빈 문자열이면 생략과 같게 처리한다 (400이 아니다)")
-    void chatTreatsBlankNicknameAsAbsent() throws Exception {
-        given(inferenceClient.postMultipartChat(anyString(), any())).willReturn("{\"success\":true}");
-
+    @DisplayName("chat: nickname이 공백뿐이면 400 — 호칭으로 쓸 수 없다")
+    void chatRejectsBlankNickname() throws Exception {
         mvc.perform(multipart(CHAT).file(audio("a.m4a", 100))
                         .param("scenario", "LUNCH").param("history", "[]")
                         .param("nickname", "   "))
-                .andExpect(status().isOk());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.field").value("nickname"));
+    }
 
-        ArgumentCaptor<MultiValueMap<String, Object>> captor = ArgumentCaptor.forClass(MultiValueMap.class);
-        verify(inferenceClient).postMultipartChat(anyString(), captor.capture());
-        assertThat(captor.getValue().containsKey("nickname")).isFalse();
+    @Test
+    @DisplayName("feedback: nickname 키가 없으면 400 + field=nickname")
+    void feedbackRequiresNickname() throws Exception {
+        String body = "{\"targetSentence\":\"많이 주세요.\",\"recognizedText\":null}";
+        mvc.perform(post(FEEDBACK).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.field").value("nickname"));
     }
 
     @Test
@@ -302,7 +303,8 @@ class AiErrorContractTest {
         given(inferenceClient.postMultipartChat(anyString(), any())).willReturn(fastApiBody);
 
         mvc.perform(multipart(CHAT).file(audio("a.m4a", 100))
-                        .param("scenario", "LUNCH").param("history", "[]"))
+                        .param("scenario", "LUNCH").param("history", "[]")
+                        .param("nickname", "민수"))
                 .andExpect(status().isOk())
                 .andExpect(header().string("X-Audio-Retention", "none"))
                 .andExpect(content().json(fastApiBody));
@@ -314,7 +316,8 @@ class AiErrorContractTest {
         given(inferenceClient.postMultipartChat(anyString(), any())).willReturn("{\"success\":true}");
 
         mvc.perform(multipart(CHAT).file(audio("a.m4a", 100))
-                        .param("scenario", "ARRIVAL").param("history", "[]"))
+                        .param("scenario", "ARRIVAL").param("history", "[]")
+                        .param("nickname", "민수"))
                 .andExpect(status().isOk());
     }
 }

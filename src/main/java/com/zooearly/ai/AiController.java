@@ -33,7 +33,7 @@ public class AiController {
             @RequestParam("scenario") String scenario,
             @RequestParam("history") String history,
             @RequestParam(value = "nativeLanguage", required = false) String nativeLanguage,
-            @RequestParam(value = "nickname", required = false) String nickname) {
+            @RequestParam("nickname") String nickname) {
         String body = relayService.chat(audio, scenario, history, nativeLanguage, nickname);
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_JSON)

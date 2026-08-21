@@ -56,9 +56,7 @@ public class AiRelayService {
         if (nativeLanguage != null) {
             parts.add("nativeLanguage", nativeLanguage);
         }
-        if (hasText(nickname)) {
-            parts.add("nickname", nickname);
-        }
+        parts.add("nickname", nickname);
         return inferenceClient.postMultipartChat("/ai/chat", parts);
     }
 
@@ -116,13 +114,11 @@ public class AiRelayService {
         if (body.hasNonNull("nativeLanguage")) {
             requireEnum(body.get("nativeLanguage").asText(), LANGUAGES, "nativeLanguage");
         }
-        if (body.hasNonNull("nickname")) {
-            JsonNode nickname = body.get("nickname");
-            if (!nickname.isTextual()) {
-                throw new BusinessException(ErrorCode.INVALID_PARAMETER, "nickname");
-            }
-            validateNickname(nickname.asText());
+        JsonNode nickname = body.get("nickname");
+        if (nickname == null || !nickname.isTextual()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "nickname");
         }
+        validateNickname(nickname.asText());
         return inferenceClient.postJson("/ai/feedback", rawBody);
     }
 
@@ -162,20 +158,14 @@ public class AiRelayService {
     }
 
     /**
-     * nickname은 선택값이다 — 명세 §2 / §5.
-     *
-     * 빈 문자열은 "보내지 않음"과 같게 처리한다. 앱이 온보딩 전이거나 호칭을
-     * 아직 안 정했을 때 ""를 보낼 수 있는데, 그걸 400으로 끊으면 아이 화면이 막힌다.
-     * 게이트웨이가 앱을 깨뜨리지 않는 쪽을 택한다.
+     * nickname은 필수값이다 — 명세 §2 / §5.
+     * 앱 온보딩에서 반드시 입력받는 값이므로 매 요청에 실려 온다.
+     * 공백만 있는 값은 호칭으로 쓸 수 없으므로 누락과 같게 본다.
      */
     private void validateNickname(String nickname) {
-        if (hasText(nickname) && nickname.length() > MAX_NICKNAME_LENGTH) {
+        if (nickname == null || nickname.isBlank() || nickname.length() > MAX_NICKNAME_LENGTH) {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER, "nickname");
         }
-    }
-
-    private boolean hasText(String value) {
-        return value != null && !value.isBlank();
     }
 
     private void requireEnum(String value, Set<String> allowed, String field) {

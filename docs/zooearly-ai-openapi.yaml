@@ -43,7 +43,7 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [audio, scenario, history]
+              required: [audio, scenario, history, nickname]
               properties:
                 audio:
                   type: string
@@ -222,7 +222,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [targetSentence, recognizedText]
+              required: [targetSentence, recognizedText, nickname]
               properties:
                 targetSentence:
                   type: string

@@ -52,7 +52,7 @@ FastAPI(Starlette)는 청크 요청을 정상 처리하므로 **그냥 쓰면 �
 
 ### ② 선택 필드는 "빈 값"이 아니라 **아예 안 온다** ★
 
-앱이 `nativeLanguage`나 `nickname`을 생략하면, 게이트웨이는 그 파트를 **만들지 않는다.**
+앱이 `nativeLanguage`를 생략하면, 게이트웨이는 그 파트를 **만들지 않는다.**
 빈 문자열도, `null` 문자열도 오지 않는다. 파트가 통째로 없다.
 
 생략했을 때 실제로 도착한 파트 목록:
@@ -62,7 +62,7 @@ POST /ai/chat
   name="audio"      ← 있음
   name="scenario"   ← 있음
   name="history"    ← 있음
-                    ← nativeLanguage / nickname 파트가 아예 없음
+                    ← nativeLanguage 파트가 아예 없음
 
 POST /ai/stt
   name="audio"      ← 있음
@@ -120,7 +120,7 @@ Content-Type: text/plain;charset=UTF-8
 | `scenario` | ✅ | `ARRIVAL` / `CLASS` / `LUNCH` / `DISMISSAL` |
 | `history` | ✅ | JSON **문자열**. 없으면 `"[]"`. 형식 `[{"role":"user"\|"assistant","content":"..."}]` |
 | `nativeLanguage` | — | `KOREAN` / `CHINESE` / `VIETNAMESE`. 생략 시 파트 없음 |
-| `nickname` | — | 아이 호칭(최대 20자). LLM이 말을 걸 때 쓴다. 생략 시 파트 없음 |
+| `nickname` | ✅ | 아이 호칭(최대 20자). LLM이 말을 걸 때 쓴다. 항상 온다 |
 
 `history`는 파싱된 객체가 아니라 **문자열**이다. FastAPI에서 `json.loads()` 해야 한다.
 
@@ -175,7 +175,7 @@ Content-Length: 145
 | `recognizedText` | ✅ | **`null`이 유효값이다.** 단 키는 반드시 있다 (STT 인식 실패 케이스) |
 | `scenario` | — | 시나리오 enum |
 | `nativeLanguage` | — | 언어 enum |
-| `nickname` | — | 아이 호칭(최대 20자). 피드백 문구에 쓴다 |
+| `nickname` | ✅ | 아이 호칭(최대 20자). 피드백 문구에 쓴다. 항상 온다 |
 
 ---
 
@@ -195,7 +195,7 @@ async def chat(
     scenario: str = Form(...),
     history: str = Form(...),            # JSON 문자열. json.loads() 필요
     nativeLanguage: Optional[str] = Form(None),   # 생략 시 파트 자체가 없다
-    nickname: Optional[str] = Form(None),         # 생략 시 파트 자체가 없다
+    nickname: str = Form(...),                    # 필수 — 게이트웨이가 검증 후 항상 보낸다
 ):
     ...
 
@@ -224,7 +224,7 @@ class FeedbackRequest(BaseModel):
     recognizedText: Optional[str]        # null이 유효값
     scenario: Optional[str] = None
     nativeLanguage: Optional[str] = None
-    nickname: Optional[str] = None
+    nickname: str
 
 
 @app.post("/ai/feedback")
