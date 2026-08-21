@@ -159,6 +159,14 @@ Content-Length: 65
 | `text` | ✅ | 비어있지 않음, 200자 이하 |
 | `voice` | — | `TEACHER` / `FRIEND` |
 | `speed` | — | 0.5 ~ 1.5 |
+| `language` | — | `KOREAN` / `CHINESE` / `VIETNAMESE`. 생략 시 `KOREAN`으로 본다 |
+
+> **`/ai/tts`는 한국어 전용이 아니다.** 피드백 화면이 한국어 문장과 모국어 번역을
+> 각각 재생하므로, 같은 엔드포인트로 두 언어가 온다. `language`로 구분해서
+> 보이스·발음을 고르면 된다. 이 필드가 없을 때 텍스트로 언어를 추측하면
+> 성조 부호 없는 로마자 표기(`chao! Minh cung rat vui`)에서 오판하기 쉽다.
+>
+> 주의: `/ai/stt`의 `language`는 BCP-47 문자열(`ko-KR`)이고, 이쪽은 enum이다.
 
 ### POST /ai/feedback
 
@@ -212,6 +220,7 @@ class TtsRequest(BaseModel):
     text: str
     voice: Optional[str] = "TEACHER"
     speed: Optional[float] = 0.9
+    language: Optional[str] = "KOREAN"   # KOREAN / CHINESE / VIETNAMESE
 
 
 @app.post("/ai/tts")

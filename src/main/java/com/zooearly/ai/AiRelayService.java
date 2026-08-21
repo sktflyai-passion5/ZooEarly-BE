@@ -93,6 +93,11 @@ public class AiRelayService {
                 throw new BusinessException(ErrorCode.INVALID_PARAMETER, "speed");
             }
         }
+        // 명세 §4 — 읽을 문장의 언어. 피드백 화면이 한국어/모국어를 각각 재생한다.
+        // /stt의 language(BCP-47 자유 문자열)와 달리 여기는 닫힌 enum이라 검증할 수 있다
+        if (body.hasNonNull("language")) {
+            requireEnum(body.get("language").asText(), LANGUAGES, "language");
+        }
         return inferenceClient.postJson("/ai/tts", rawBody);
     }
 
