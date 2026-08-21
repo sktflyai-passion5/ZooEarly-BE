@@ -39,14 +39,20 @@
                              (②에서 받은 /feedback 응답을 그림)
         │
 ④ 자연스러운 표현            "이렇게 말하면 더 자연스러워요"
-     🔊 [한국어 문장]  ──────▶ POST /tts { language: "KOREAN" }        ★
+     ┌ 화면에 뜨는 문장은 ②에서 받은 /feedback 응답이다. 여기서 새로 받지 않는다
+     │    한국어 = naturalSentence,  모국어 = translation
+     │
+     🔊 [한국어 문장]  ──────▶ POST /tts { language: "KOREAN" }        ★ 탭했을 때만
      "이 말의 뜻이에요!"
-     🔊 [모국어 번역]  ──────▶ POST /tts { language: <nativeLanguage> } ★
+     🔊 [모국어 번역]  ──────▶ POST /tts { language: <nativeLanguage> } ★ 탭했을 때만
                              [다음]                          API 없음
         │
 ⑤ 따라 말하기                "이제 따라 말해볼까요?"
-     🔊 [문장 상자]    ──────▶ POST /tts { language: "KOREAN" }        ★
+     ┌ 따라 말할 문장 = ④의 naturalSentence. 역시 새로 받지 않는다
+     │
+     🔊 [문장 상자]    ──────▶ POST /tts { language: "KOREAN" }        ★ 탭했을 때만
      🎤 녹음 종료      ──────▶ POST /stt ──▶ POST /feedback            ★
+                             └ 이때 targetSentence는 ④의 naturalSentence다
                              [다음]                          API 없음
         │
 ⑥ 완료 화면                  [홈으로 돌아가기]                API 없음
@@ -82,11 +88,13 @@
 | 🎤 녹음 | **녹음 종료** | **`POST /stt`** | `audio`, `language`(BCP-47, 예 `ko-KR`) |
 | 🎤 녹음 | (이어서) | **`POST /feedback`** | `targetSentence`, `recognizedText`(= stt 결과), `nickname`, `nativeLanguage`, `scenario` |
 | 피드백 배너 | — | — | `/feedback` 응답의 `title`·`body`를 그린다 |
+| 자연스러운 표현 | (화면 진입) | — | **문장은 ②의 `/feedback` 응답에서 온다.** 새로 부르지 않는다 |
 | 자연스러운 표현 | 🔊 **한국어 상자** | **`POST /tts`** | `text`= `naturalSentence`, `language`=`"KOREAN"` |
 | 자연스러운 표현 | 🔊 **모국어 상자** | **`POST /tts`** | `text`= `translation`, `language`= 아이의 `nativeLanguage` |
 | 자연스러운 표현 | `다음` | — | |
-| 따라 말하기 | 🔊 **문장 상자** | **`POST /tts`** | `text`= 따라 말할 문장, `language`=`"KOREAN"` |
-| 따라 말하기 | **녹음 종료** | **`POST /stt`** → **`POST /feedback`** | 위와 동일 |
+| 따라 말하기 | (화면 진입) | — | 따라 말할 문장 = ④의 `naturalSentence` |
+| 따라 말하기 | 🔊 **문장 상자** | **`POST /tts`** | `text`= `naturalSentence`, `language`=`"KOREAN"` |
+| 따라 말하기 | **녹음 종료** | **`POST /stt`** → **`POST /feedback`** | 이때 `targetSentence`는 **④의 `naturalSentence`** 다 |
 | 따라 말하기 | `다음` | — | |
 | 완료 | `홈으로 돌아가기` | — | |
 
@@ -102,7 +110,7 @@
 
 ---
 
-## 주의할 점 4가지
+## 주의할 점 5가지
 
 ### ① `/tts`의 `language`는 필수다 (v1.3.0~)
 
@@ -121,7 +129,21 @@
 이때도 `/feedback`을 그대로 부른다 — `recognizedText: null`이 유효한 값이고,
 "괜찮아, 다시 해볼까?" 류의 격려 피드백이 돌아온다 (명세 §5 설계 계약 1).
 
-### ④ TTS 결과는 앱이 캐시한다
+### ④ 화면에 뜨는 문장과 재생되는 음성은 출처가 다르다
+
+혼동하기 쉬운 지점이다.
+
+| | 어디서 | 언제 |
+|---|---|---|
+| **문장(텍스트)** | `/feedback` 응답 | 🎤 녹음이 끝났을 때 이미 받아둔 것 |
+| **음성(mp3)** | `/tts` 응답 | 🔊를 **탭한 그 순간** |
+
+`/feedback`은 문장만 준다 — 음성은 안 준다.
+`/tts`는 음성만 준다 — 번역도 교정도 하지 않는다.
+
+그래서 "자연스러운 표현" 화면은 **들어올 때는 API를 안 부르고**, 🔊를 탭할 때만 부른다.
+
+### ⑤ TTS 결과는 앱이 캐시한다
 
 같은 문장을 두 번 이상 재생할 때 매번 서버에 묻지 않는다. 스텝 문장은 고정이라
 적중률이 높다 (명세 §4).
