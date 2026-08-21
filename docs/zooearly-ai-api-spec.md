@@ -412,6 +412,8 @@ Content-Type: application/json
 }
 ```
 
+> `naturalSentence`와 `translation`은 피드백 화면에서 각각 🔊 버튼이 달린 상자로 표시된다. 탭하면 앱이 `/tts`를 호출한다 — 흐름은 §7 참고.
+
 **설계 계약**
 
 1. **`recognizedText: null`도 유효한 요청이다.** "괜찮아, 다시 해볼까?" 류의 격려 피드백이 생성된다 (`understood: false`, `matched: false`).
@@ -454,11 +456,23 @@ Content-Type: application/json
   ① 로컬 캐시 확인 → 있으면 즉시 재생
   ② 없으면 POST /tts → mp3 캐시 + 재생
 
+[피드백 화면 — 🔊 상자 두 개]
+  ① POST /feedback 응답에서 두 문장을 받아둔다
+       naturalSentence  "많이 주세요."          (한국어)
+       translation      "Cho mình nhiều nhé."   (모국어, KOREAN이면 null)
+  ② 윗상자 탭  → POST /tts { text: naturalSentence, language: "KOREAN" }
+  ③ 아랫상자 탭 → POST /tts { text: translation,     language: <아이의 nativeLanguage> }
+  ④ 앱 로컬: 문장별로 캐시. 같은 문장은 두 번 묻지 않는다
+
 [네트워크 실패 시 (어디서든)]
   → "괜찮아, 다시 해볼까?" 폴백. 스텝 진행은 막지 않는다.
 ```
 
 > **`stt`+`feedback` 2회 호출 vs `chat` 1회 호출의 구분 기준**: 목표 문장이 정해져 있으면(스텝 플레이) 전자, 자유 대화면 후자다. 스텝 플레이에서 `chat`을 쓰지 않는 이유는 LLM 응답 생성·TTS가 불필요해 지연과 비용만 늘기 때문이다.
+>
+> **피드백 화면의 아랫상자에는 `language`를 반드시 넣는다.** 같은 `/tts`로 한국어와 모국어가 둘 다 나가므로, 언어를 안 알려주면 FastAPI가 텍스트로 추측해야 한다. 성조 부호 없는 로마자 표기(`chao! Minh cung rat vui`)는 오판되기 쉽고, 그러면 아이가 엉뚱한 발음을 듣는다.
+>
+> **화면의 선택지·스텝 데이터는 서버가 만들지 않는다.** "어떤 표현을 사용해볼까요?"의 보기 문장들은 앱 번들 데이터다 — §0.2 무상태 원칙.
 
 ---
 
