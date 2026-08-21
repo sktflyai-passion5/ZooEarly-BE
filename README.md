@@ -25,6 +25,10 @@ DB 없음, 무상태(stateless). 비즈니스 로직을 여기에 추가하지 �
 상세 명세: 프로젝트 문서 `zooearly-ai-api-spec.md` / Swagger: `zooearly-ai-openapi.yaml`
 (yaml을 https://editor.swagger.io 에 붙여넣으면 UI로 볼 수 있다)
 
+> 위 두 문서는 **앱 → 게이트웨이** 규약이다.
+> **게이트웨이 → FastAPI** 규약은 [`docs/zooearly-gateway-to-fastapi.md`](docs/zooearly-gateway-to-fastapi.md)에 따로 있다.
+> FastAPI 담당자에게는 그 문서를 주면 된다.
+
 ## 기술 스택
 
 - Java 17 / Spring Boot 3.5 / Gradle 8.14
