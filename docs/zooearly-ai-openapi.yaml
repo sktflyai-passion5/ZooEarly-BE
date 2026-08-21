@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: ZooEarly AI API
-  version: 1.0.0
+  version: 1.1.0
   description: |
     쥬얼리 (ZooEarly) — AI API 명세서 (v1.0 · 2026-08-21)
 

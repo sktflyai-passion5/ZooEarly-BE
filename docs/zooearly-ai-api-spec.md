@@ -1,6 +1,6 @@
 # 쥬얼리 (ZooEarly) — AI API 명세서
 
-> **v1.0 · 2026-08-21**
+> **v1.1.0 · 2026-08-21**
 > React Native 앱 ↔ API Gateway ↔ FastAPI Inference Server(STT / LLM / TTS → OpenAI API)
 > **이 문서가 기존 `zooearly-api-spec.md`(13개 엔드포인트)를 대체한다.** 시나리오·스토리·진행 상태는 전부 앱 로컬로 이동했고, 서버에 남는 것은 AI 추론뿐이다.
 
@@ -12,6 +12,17 @@
 | 요청/응답 | `application/json` (음성 업로드만 `multipart/form-data`) |
 | 인증 | 없음 (프로토타입) |
 | 엔드포인트 | **4개** — `chat` / `stt` / `tts` / `feedback` |
+
+---
+
+## 변경 이력
+
+| 버전 | 날짜 | 변경 | 앱 영향 |
+|---|---|---|---|
+| **1.1.0** | 2026-08-21 | `chat` / `feedback`에 `nickname` **필수** 필드 추가 | ⚠️ **있음** — 앱이 온보딩에서 받은 닉네임을 매 요청에 보내야 한다. 누락 시 `400 INVALID_PARAMETER` |
+| 1.0.0 | 2026-08-21 | 최초 작성. 엔드포인트 4개 | — |
+
+> `nativeLanguage`는 1.0.0과 동일하게 **선택**이다 (생략 시 `KOREAN`). 바뀌지 않았다.
 
 ---
 
