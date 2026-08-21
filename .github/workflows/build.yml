@@ -1,11 +1,12 @@
 name: build
 
-# PR과 main 푸시에서만 돈다. 이 서버는 무상태 게이트웨이라 DB·외부 서비스 없이 빌드/테스트가 끝난다
+# dev/main으로 가는 모든 PR과 푸시에서 돈다.
+# 이 서버는 무상태 게이트웨이라 DB·외부 서비스 없이 빌드/테스트가 끝난다
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
 
 jobs:
   build:
