@@ -6,8 +6,14 @@ spring:
     name: zooearly-gateway
   servlet:
     multipart:
-      max-file-size: 10MB      # 명세 §1.4 — 오디오 최대 10MB
-      max-request-size: 12MB   # audio + 텍스트 필드 여유분
+      # 명세 §1.4의 오디오 상한은 10MB지만 여기는 일부러 여유를 둔다.
+      # 컨테이너 제한이 10MB면 10MB 초과 요청이 컨트롤러 진입 전에 잘려
+      # 413 PAYLOAD_TOO_LARGE가 나가고, 명세 §1.3이 요구하는
+      # 400 AUDIO_TOO_LARGE를 만들 기회 자체가 없어진다.
+      # 여유를 둬서 AiRelayService가 먼저 판정하게 하고,
+      # 아래 값은 무제한 업로드를 막는 최후 방어선으로만 쓴다.
+      max-file-size: 12MB
+      max-request-size: 15MB
 
 inference:
   base-url: ${INFERENCE_BASE_URL:http://localhost:8000}  # FastAPI 주소. 배포 시 환경변수로 주입
