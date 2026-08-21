@@ -7,7 +7,6 @@ import com.zooearly.common.exception.BusinessException;
 import com.zooearly.common.response.ErrorCode;
 import java.io.IOException;
 import java.util.Set;
-import org.springframework.core.io.ByteArrayResource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -16,6 +15,9 @@ import org.springframework.web.multipart.MultipartFile;
 /**
  * 게이트웨이의 전부 — 검증하고, 전달하고, 끝. (§0.1)
  * 비즈니스 로직·DB 저장·응답 가공을 여기에 추가하지 않는다.
+ *
+ * 오디오는 MultipartFile.getResource()로 스트림 그대로 넘긴다 — 명세 §8.
+ * getBytes()를 쓰면 파일 전체가 힙에 복사돼 10MB 동시 요청에 취약해진다.
  */
 @Service
 public class AiRelayService {
@@ -25,6 +27,7 @@ public class AiRelayService {
     private static final Set<String> LANGUAGES = Set.of("KOREAN", "CHINESE", "VIETNAMESE");
     private static final Set<String> VOICES = Set.of("TEACHER", "FRIEND");
     private static final long MAX_AUDIO_BYTES = 10L * 1024 * 1024;
+    private static final int MAX_NICKNAME_LENGTH = 20;   // 명세 §2 / §5
 
     private final InferenceClient inferenceClient;
     private final ObjectMapper objectMapper;
@@ -36,21 +39,24 @@ public class AiRelayService {
 
     // ── chat ──────────────────────────────────────────────
 
-    public String chat(MultipartFile audio, String scenario, String history, String nativeLanguage) {
+    public String chat(MultipartFile audio, String scenario, String history,
+                       String nativeLanguage, String nickname) {
         validateAudio(audio);
         requireEnum(scenario, SCENARIOS, "scenario");
         validateHistory(history);
         if (nativeLanguage != null) {
             requireEnum(nativeLanguage, LANGUAGES, "nativeLanguage");
         }
+        validateNickname(nickname);
 
         MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
-        parts.add("audio", toResource(audio));
+        parts.add("audio", audio.getResource());
         parts.add("scenario", scenario);
         parts.add("history", history);
         if (nativeLanguage != null) {
             parts.add("nativeLanguage", nativeLanguage);
         }
+        parts.add("nickname", nickname);
         return inferenceClient.postMultipartChat("/ai/chat", parts);
     }
 
@@ -60,7 +66,7 @@ public class AiRelayService {
         validateAudio(audio);
 
         MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
-        parts.add("audio", toResource(audio));
+        parts.add("audio", audio.getResource());
         if (language != null) {
             parts.add("language", language);
         }
@@ -108,6 +114,11 @@ public class AiRelayService {
         if (body.hasNonNull("nativeLanguage")) {
             requireEnum(body.get("nativeLanguage").asText(), LANGUAGES, "nativeLanguage");
         }
+        JsonNode nickname = body.get("nickname");
+        if (nickname == null || !nickname.isTextual()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "nickname");
+        }
+        validateNickname(nickname.asText());
         return inferenceClient.postJson("/ai/feedback", rawBody);
     }
 
@@ -146,6 +157,17 @@ public class AiRelayService {
         }
     }
 
+    /**
+     * nickname은 필수값이다 — 명세 §2 / §5.
+     * 앱 온보딩에서 반드시 입력받는 값이므로 매 요청에 실려 온다.
+     * 공백만 있는 값은 호칭으로 쓸 수 없으므로 누락과 같게 본다.
+     */
+    private void validateNickname(String nickname) {
+        if (nickname == null || nickname.isBlank() || nickname.length() > MAX_NICKNAME_LENGTH) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "nickname");
+        }
+    }
+
     private void requireEnum(String value, Set<String> allowed, String field) {
         if (value == null || !allowed.contains(value)) {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER, field);
@@ -161,22 +183,6 @@ public class AiRelayService {
             return objectMapper.readTree(raw);
         } catch (IOException e) {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER, field);
-        }
-    }
-
-    /** MultipartFile → 릴레이용 리소스. 파일명이 있어야 FastAPI가 UploadFile로 인식한다 */
-    private ByteArrayResource toResource(MultipartFile file) {
-        try {
-            byte[] bytes = file.getBytes();
-            String filename = file.getOriginalFilename();
-            return new ByteArrayResource(bytes) {
-                @Override
-                public String getFilename() {
-                    return filename;
-                }
-            };
-        } catch (IOException e) {
-            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "audio");
         }
     }
 }

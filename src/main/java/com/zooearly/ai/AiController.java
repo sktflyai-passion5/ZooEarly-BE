@@ -32,8 +32,9 @@ public class AiController {
             @RequestPart("audio") MultipartFile audio,
             @RequestParam("scenario") String scenario,
             @RequestParam("history") String history,
-            @RequestParam(value = "nativeLanguage", required = false) String nativeLanguage) {
-        String body = relayService.chat(audio, scenario, history, nativeLanguage);
+            @RequestParam(value = "nativeLanguage", required = false) String nativeLanguage,
+            @RequestParam("nickname") String nickname) {
+        String body = relayService.chat(audio, scenario, history, nativeLanguage, nickname);
         return ResponseEntity.ok()
                 .contentType(MediaType.APPLICATION_JSON)
                 .header("X-Audio-Retention", "none")   // 명세 §2 계약 3 — 오디오 미저장 보증
