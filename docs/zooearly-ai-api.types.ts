@@ -453,12 +453,12 @@ export interface operations {
                      */
                     speed?: number;
                     /**
-                     * @description 읽을 문장의 언어. 생략 시 KOREAN.
-                     *     모국어 번역을 읽어줄 때는 반드시 지정한다 — 생략하면 FastAPI가
-                     *     텍스트로 언어를 추측해야 해서 오판 위험이 있다.
+                     * @description 읽을 문장의 언어. 필수.
+                     *     한국어 문장을 읽을 때도 KOREAN을 명시한다. 같은 엔드포인트로
+                     *     여러 언어가 나가므로 추측의 여지를 두지 않는다.
                      *     주의: /ai/stt의 language는 BCP-47 문자열이고 이쪽은 enum이다.
                      */
-                    language?: components["schemas"]["NativeLanguage"];
+                    language: components["schemas"]["NativeLanguage"];
                 };
             };
         };
