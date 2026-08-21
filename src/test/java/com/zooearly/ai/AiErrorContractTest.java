@@ -1,8 +1,11 @@
 package com.zooearly.ai;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -16,12 +19,14 @@ import com.zooearly.common.exception.InferencePassthroughException;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import org.junit.jupiter.api.DisplayName;
+import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.util.MultiValueMap;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.client.ResourceAccessException;
@@ -42,6 +47,7 @@ class AiErrorContractTest {
     private static final String CHAT = "/api/v1/ai/chat";
     private static final String STT = "/api/v1/ai/stt";
     private static final String TTS = "/api/v1/ai/tts";
+    private static final String FEEDBACK = "/api/v1/ai/feedback";
 
     @Autowired
     private MockMvc mvc;
@@ -196,6 +202,95 @@ class AiErrorContractTest {
                         .content("{\"text\":\"안녕\",\"speed\":9.9}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.field").value("speed"));
+    }
+
+    // ── nickname (선택 필드) — 명세 §2 / §5 ────────────────────
+
+    @Test
+    @DisplayName("chat: nickname을 보내면 FastAPI로 파트가 전달된다")
+    void chatRelaysNickname() throws Exception {
+        given(inferenceClient.postMultipartChat(anyString(), any())).willReturn("{\"success\":true}");
+
+        mvc.perform(multipart(CHAT).file(audio("a.m4a", 100))
+                        .param("scenario", "LUNCH").param("history", "[]")
+                        .param("nickname", "민수"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<MultiValueMap<String, Object>> captor = ArgumentCaptor.forClass(MultiValueMap.class);
+        verify(inferenceClient).postMultipartChat(anyString(), captor.capture());
+        assertThat(captor.getValue().getFirst("nickname")).isEqualTo("민수");
+    }
+
+    @Test
+    @DisplayName("chat: nickname을 생략하면 파트를 아예 만들지 않는다")
+    void chatOmitsNicknameWhenAbsent() throws Exception {
+        given(inferenceClient.postMultipartChat(anyString(), any())).willReturn("{\"success\":true}");
+
+        mvc.perform(multipart(CHAT).file(audio("a.m4a", 100))
+                        .param("scenario", "LUNCH").param("history", "[]"))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<MultiValueMap<String, Object>> captor = ArgumentCaptor.forClass(MultiValueMap.class);
+        verify(inferenceClient).postMultipartChat(anyString(), captor.capture());
+        assertThat(captor.getValue().containsKey("nickname")).isFalse();
+    }
+
+    @Test
+    @DisplayName("chat: nickname이 빈 문자열이면 생략과 같게 처리한다 (400이 아니다)")
+    void chatTreatsBlankNicknameAsAbsent() throws Exception {
+        given(inferenceClient.postMultipartChat(anyString(), any())).willReturn("{\"success\":true}");
+
+        mvc.perform(multipart(CHAT).file(audio("a.m4a", 100))
+                        .param("scenario", "LUNCH").param("history", "[]")
+                        .param("nickname", "   "))
+                .andExpect(status().isOk());
+
+        ArgumentCaptor<MultiValueMap<String, Object>> captor = ArgumentCaptor.forClass(MultiValueMap.class);
+        verify(inferenceClient).postMultipartChat(anyString(), captor.capture());
+        assertThat(captor.getValue().containsKey("nickname")).isFalse();
+    }
+
+    @Test
+    @DisplayName("chat: nickname이 20자를 넘으면 400 + field=nickname")
+    void chatRejectsTooLongNickname() throws Exception {
+        mvc.perform(multipart(CHAT).file(audio("a.m4a", 100))
+                        .param("scenario", "LUNCH").param("history", "[]")
+                        .param("nickname", "가".repeat(21)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_PARAMETER"))
+                .andExpect(jsonPath("$.error.field").value("nickname"));
+    }
+
+    @Test
+    @DisplayName("feedback: nickname이 20자를 넘으면 400 + field=nickname")
+    void feedbackRejectsTooLongNickname() throws Exception {
+        String body = "{\"targetSentence\":\"많이 주세요.\",\"recognizedText\":null,\"nickname\":\""
+                + "가".repeat(21) + "\"}";
+        mvc.perform(post(FEEDBACK).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.field").value("nickname"));
+    }
+
+    @Test
+    @DisplayName("feedback: nickname이 문자열이 아니면 400 + field=nickname")
+    void feedbackRejectsNonTextNickname() throws Exception {
+        String body = "{\"targetSentence\":\"많이 주세요.\",\"recognizedText\":null,\"nickname\":123}";
+        mvc.perform(post(FEEDBACK).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.field").value("nickname"));
+    }
+
+    @Test
+    @DisplayName("feedback: nickname은 body에 실려 그대로 통과한다")
+    void feedbackPassesNicknameThrough() throws Exception {
+        String body = "{\"targetSentence\":\"많이 주세요.\",\"recognizedText\":null,\"nickname\":\"민수\"}";
+        given(inferenceClient.postJson(anyString(), anyString())).willReturn("{\"success\":true}");
+
+        mvc.perform(post(FEEDBACK).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+
+        // body는 가공 없이 통과한다 — §0.1 릴레이 계약
+        verify(inferenceClient).postJson(anyString(), eq(body));
     }
 
     // ── 정상 경로 ─────────────────────────────────────────────

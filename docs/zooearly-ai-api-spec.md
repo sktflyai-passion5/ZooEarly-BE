@@ -39,6 +39,7 @@ React Native App ──HTTPS/REST──▶ API Gateway ──HTTP──▶ FastA
 - `chat`의 대화 이력(`history`) — 앱이 로컬에 쌓아서 매 요청에 실어 보낸다
 - `feedback`의 목표 문장(`targetSentence`) — 스텝 데이터가 앱 번들에 있으므로 앱이 보낸다
 - 시나리오 컨텍스트(`scenario`) — LLM 프롬프트 구성용 힌트로 앱이 보낸다
+- 아이 호칭(`nickname`) — 앱의 온보딩에서 받은 값이므로 앱이 보낸다. 서버는 저장하지 않는다
 
 ### 0.3 경로 매핑
 
@@ -194,6 +195,7 @@ Content-Type: multipart/form-data
 | `scenario` | `string(enum)` | ✅ | LLM 시스템 프롬프트 구성용 | `"LUNCH"` |
 | `history` | `string(JSON)` | ✅ | 지금까지의 대화. 없으면 `"[]"` | 아래 참고 |
 | `nativeLanguage` | `string(enum)` | — | 생략 시 `KOREAN` | `"VIETNAMESE"` |
+| `nickname` | `string` | — | 아이 호칭. LLM이 말을 걸 때 쓴다. 최대 20자 | `"민수"` |
 
 **`history` JSON 구조** — 앱이 로컬에 쌓아 매 요청에 실어 보낸다 (서버는 무상태)
 
@@ -216,7 +218,8 @@ curl -X POST https://zooearly.app/api/v1/ai/chat \
   -F "audio=@speech.m4a;type=audio/m4a" \
   -F "scenario=LUNCH" \
   -F 'history=[{"role":"assistant","content":"불고기 많이 줄까?"}]' \
-  -F "nativeLanguage=VIETNAMESE"
+  -F "nativeLanguage=VIETNAMESE" \
+  -F "nickname=민수"
 ```
 
 **Response `200 OK`**
@@ -341,13 +344,15 @@ Content-Type: application/json
 | `recognizedText` | `string?` | ✅ | STT 결과. 인식 실패면 `null` | `"많이 주세여"` |
 | `scenario` | `string(enum)` | — | 상황 힌트 | `"LUNCH"` |
 | `nativeLanguage` | `string(enum)` | — | 번역 생성 언어. 생략 시 `KOREAN`(번역 없음) | `"VIETNAMESE"` |
+| `nickname` | `string` | — | 아이 호칭. 피드백 문구에 쓴다. 최대 20자 | `"민수"` |
 
 ```json
 {
   "targetSentence": "많이 주세요.",
   "recognizedText": "많이 주세여",
   "scenario": "LUNCH",
-  "nativeLanguage": "VIETNAMESE"
+  "nativeLanguage": "VIETNAMESE",
+  "nickname": "민수"
 }
 ```
 

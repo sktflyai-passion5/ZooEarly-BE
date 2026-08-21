@@ -331,6 +331,8 @@ export interface operations {
                      */
                     history: string;
                     nativeLanguage?: components["schemas"]["NativeLanguage"];
+                    /** @description 아이 호칭. 최대 20자 */
+                    nickname?: string;
                 };
             };
         };
@@ -503,6 +505,8 @@ export interface operations {
                     recognizedText: string | null;
                     scenario?: components["schemas"]["Scenario"];
                     nativeLanguage?: components["schemas"]["NativeLanguage"];
+                    /** @description 아이 호칭. 최대 20자 */
+                    nickname?: string;
                 };
             };
         };

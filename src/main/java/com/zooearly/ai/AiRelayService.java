@@ -27,6 +27,7 @@ public class AiRelayService {
     private static final Set<String> LANGUAGES = Set.of("KOREAN", "CHINESE", "VIETNAMESE");
     private static final Set<String> VOICES = Set.of("TEACHER", "FRIEND");
     private static final long MAX_AUDIO_BYTES = 10L * 1024 * 1024;
+    private static final int MAX_NICKNAME_LENGTH = 20;   // 명세 §2 / §5
 
     private final InferenceClient inferenceClient;
     private final ObjectMapper objectMapper;
@@ -38,13 +39,15 @@ public class AiRelayService {
 
     // ── chat ──────────────────────────────────────────────
 
-    public String chat(MultipartFile audio, String scenario, String history, String nativeLanguage) {
+    public String chat(MultipartFile audio, String scenario, String history,
+                       String nativeLanguage, String nickname) {
         validateAudio(audio);
         requireEnum(scenario, SCENARIOS, "scenario");
         validateHistory(history);
         if (nativeLanguage != null) {
             requireEnum(nativeLanguage, LANGUAGES, "nativeLanguage");
         }
+        validateNickname(nickname);
 
         MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
         parts.add("audio", audio.getResource());
@@ -52,6 +55,9 @@ public class AiRelayService {
         parts.add("history", history);
         if (nativeLanguage != null) {
             parts.add("nativeLanguage", nativeLanguage);
+        }
+        if (hasText(nickname)) {
+            parts.add("nickname", nickname);
         }
         return inferenceClient.postMultipartChat("/ai/chat", parts);
     }
@@ -110,6 +116,13 @@ public class AiRelayService {
         if (body.hasNonNull("nativeLanguage")) {
             requireEnum(body.get("nativeLanguage").asText(), LANGUAGES, "nativeLanguage");
         }
+        if (body.hasNonNull("nickname")) {
+            JsonNode nickname = body.get("nickname");
+            if (!nickname.isTextual()) {
+                throw new BusinessException(ErrorCode.INVALID_PARAMETER, "nickname");
+            }
+            validateNickname(nickname.asText());
+        }
         return inferenceClient.postJson("/ai/feedback", rawBody);
     }
 
@@ -146,6 +159,23 @@ public class AiRelayService {
                 throw new BusinessException(ErrorCode.INVALID_PARAMETER, "history");
             }
         }
+    }
+
+    /**
+     * nickname은 선택값이다 — 명세 §2 / §5.
+     *
+     * 빈 문자열은 "보내지 않음"과 같게 처리한다. 앱이 온보딩 전이거나 호칭을
+     * 아직 안 정했을 때 ""를 보낼 수 있는데, 그걸 400으로 끊으면 아이 화면이 막힌다.
+     * 게이트웨이가 앱을 깨뜨리지 않는 쪽을 택한다.
+     */
+    private void validateNickname(String nickname) {
+        if (hasText(nickname) && nickname.length() > MAX_NICKNAME_LENGTH) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "nickname");
+        }
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     private void requireEnum(String value, Set<String> allowed, String field) {
