@@ -1,8 +1,6 @@
 package com.zooearly.ai.client;
 
-import com.zooearly.common.exception.BusinessException;
 import com.zooearly.common.exception.InferencePassthroughException;
-import com.zooearly.common.response.ErrorCode;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
@@ -66,20 +64,15 @@ public class InferenceClient {
                     .retrieve()
                     .body(String.class);
         } catch (RestClientResponseException e) {
-            throw translate(e);
+            // 422/429만 FastAPI가 만든 body를 그대로 통과시킨다.
+            // 나머지 4xx/5xx는 손대지 않고 그대로 올려보내면
+            // GlobalExceptionHandler가 AI_SERVER_ERROR(502)로 감싼다 — §1.3
+            int status = e.getStatusCode().value();
+            if (status == 422 || status == 429) {
+                throw new InferencePassthroughException(status, e.getResponseBodyAsString());
+            }
+            throw e;
         }
     }
 
-    /**
-     * FastAPI 에러 변환 — §1.3.
-     * 422 / 429는 FastAPI가 §1.2 포맷으로 만들어 보내므로 그대로 통과,
-     * 그 외 4xx/5xx는 전부 AI_SERVER_ERROR(502)로 감싼다.
-     */
-    private RuntimeException translate(RestClientResponseException e) {
-        int status = e.getStatusCode().value();
-        if (status == 422 || status == 429) {
-            return new InferencePassthroughException(status, e.getResponseBodyAsString());
-        }
-        return new BusinessException(ErrorCode.AI_SERVER_ERROR, null);
-    }
 }
