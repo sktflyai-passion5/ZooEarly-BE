@@ -1,0 +1,11 @@
+# 팀원이 Windows/Mac을 섞어 쓰므로 개행을 저장소 기준(LF)으로 통일한다
+* text=auto eol=lf
+
+# Windows 배치 파일은 CRLF여야 실행된다
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# gradlew는 Linux CI에서 실행되므로 반드시 LF
+gradlew text eol=lf
+
+*.jar binary

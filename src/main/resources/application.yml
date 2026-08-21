@@ -1,0 +1,17 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: zooearly-gateway
+  servlet:
+    multipart:
+      max-file-size: 10MB      # 명세 §1.4 — 오디오 최대 10MB
+      max-request-size: 12MB   # audio + 텍스트 필드 여유분
+
+inference:
+  base-url: ${INFERENCE_BASE_URL:http://localhost:8000}  # FastAPI 주소. 배포 시 환경변수로 주입
+  timeout:
+    connect-seconds: 3         # 명세 §0.4
+    read-seconds: 15           # stt / tts / feedback
+    chat-read-seconds: 30      # chat (STT+LLM+TTS 3단)
