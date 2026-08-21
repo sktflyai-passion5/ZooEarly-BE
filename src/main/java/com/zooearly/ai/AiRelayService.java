@@ -7,7 +7,6 @@ import com.zooearly.common.exception.BusinessException;
 import com.zooearly.common.response.ErrorCode;
 import java.io.IOException;
 import java.util.Set;
-import org.springframework.core.io.ByteArrayResource;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -16,6 +15,9 @@ import org.springframework.web.multipart.MultipartFile;
 /**
  * 게이트웨이의 전부 — 검증하고, 전달하고, 끝. (§0.1)
  * 비즈니스 로직·DB 저장·응답 가공을 여기에 추가하지 않는다.
+ *
+ * 오디오는 MultipartFile.getResource()로 스트림 그대로 넘긴다 — 명세 §8.
+ * getBytes()를 쓰면 파일 전체가 힙에 복사돼 10MB 동시 요청에 취약해진다.
  */
 @Service
 public class AiRelayService {
@@ -45,7 +47,7 @@ public class AiRelayService {
         }
 
         MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
-        parts.add("audio", toResource(audio));
+        parts.add("audio", audio.getResource());
         parts.add("scenario", scenario);
         parts.add("history", history);
         if (nativeLanguage != null) {
@@ -60,7 +62,7 @@ public class AiRelayService {
         validateAudio(audio);
 
         MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
-        parts.add("audio", toResource(audio));
+        parts.add("audio", audio.getResource());
         if (language != null) {
             parts.add("language", language);
         }
@@ -161,22 +163,6 @@ public class AiRelayService {
             return objectMapper.readTree(raw);
         } catch (IOException e) {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER, field);
-        }
-    }
-
-    /** MultipartFile → 릴레이용 리소스. 파일명이 있어야 FastAPI가 UploadFile로 인식한다 */
-    private ByteArrayResource toResource(MultipartFile file) {
-        try {
-            byte[] bytes = file.getBytes();
-            String filename = file.getOriginalFilename();
-            return new ByteArrayResource(bytes) {
-                @Override
-                public String getFilename() {
-                    return filename;
-                }
-            };
-        } catch (IOException e) {
-            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "audio");
         }
     }
 }
