@@ -1,6 +1,6 @@
 # 쥬얼리 (ZooEarly) — AI API 명세서
 
-> **v1.2.0 · 2026-08-21**
+> **v1.3.0 · 2026-08-21**
 > React Native 앱 ↔ API Gateway ↔ FastAPI Inference Server(STT / LLM / TTS → OpenAI API)
 > **이 문서가 기존 `zooearly-api-spec.md`(13개 엔드포인트)를 대체한다.** 시나리오·스토리·진행 상태는 전부 앱 로컬로 이동했고, 서버에 남는 것은 AI 추론뿐이다.
 
@@ -19,7 +19,8 @@
 
 | 버전 | 날짜 | 변경 | 앱 영향 |
 |---|---|---|---|
-| **1.2.0** | 2026-08-21 | `tts`에 `language` **선택** 필드 추가 | 없음 (하위 호환) — 다만 **모국어 문장을 읽을 때는 넣어야** 발음이 맞는다 |
+| **1.3.0** | 2026-08-21 | `tts`의 `language`를 **필수**로 전환 | ⚠️ **있음** — `/tts`를 부르는 **모든 곳**에 넣어야 한다. 피드백 화면뿐 아니라 `DIALOGUE` 🔊·`LISTEN` 스텝의 한국어 재생도 `"KOREAN"`을 명시한다. 누락 시 `400 INVALID_PARAMETER` |
+| 1.2.0 | 2026-08-21 | `tts`에 `language` 선택 필드 추가 | — (1.3.0에서 필수로 바뀜) |
 | **1.1.0** | 2026-08-21 | `chat` / `feedback`에 `nickname` **필수** 필드 추가 | ⚠️ **있음** — 앱이 온보딩에서 받은 닉네임을 매 요청에 보내야 한다. 누락 시 `400 INVALID_PARAMETER` |
 | 1.0.0 | 2026-08-21 | 최초 작성. 엔드포인트 4개 | — |
 
@@ -320,13 +321,13 @@ Content-Type: application/json
 | `text` | `string` | ✅ | 읽을 문장. 최대 200자 | `"불고기 많이 줄까?"` |
 | `voice` | `string(enum)` | — | `TEACHER` / `FRIEND`. 생략 시 `TEACHER` | `"TEACHER"` |
 | `speed` | `number` | — | 0.5~1.5. 생략 시 `0.9` (아동용 기본 느리게) | `0.9` |
-| `language` | `string(enum)` | — | 읽을 문장의 언어. 생략 시 `KOREAN` | `"VIETNAMESE"` |
+| `language` | `string(enum)` | ✅ | 읽을 문장의 언어. §1.5 enum | `"VIETNAMESE"` |
 
 ```json
 { "text": "불고기 많이 줄까?", "voice": "TEACHER", "speed": 0.9, "language": "KOREAN" }
 ```
 
-모국어 번역을 읽어줄 때 — 피드백 화면 아래쪽 상자
+모국어 번역을 읽어줄 때 — 피드백 화면 아래쪽 상자 (`voice`·`speed`는 생략 가능)
 
 ```json
 { "text": "Cho mình nhiều nhé.", "language": "VIETNAMESE" }
@@ -340,7 +341,7 @@ Content-Type: application/json
 | `audio.data` | `string(base64)` | mp3 바이너리 | `"SUQzBAAA..."` |
 | `audio.format` | `string` | 항상 `"mp3"` | `"mp3"` |
 
-> **`language`를 생략하면 `KOREAN`으로 본다.** 모국어 문장을 읽을 때는 반드시 넣어야 한다. 안 넣으면 FastAPI가 텍스트만 보고 언어를 추측해야 하는데, 성조 부호 없는 로마자 표기(`chao! Minh cung rat vui`)는 다른 언어로 오판되기 쉽다.
+> **`language`는 필수다.** 한국어 문장을 읽을 때도 `"KOREAN"`을 명시한다. 같은 엔드포인트로 여러 언어가 나가므로 추측의 여지를 두지 않는다 — 성조 부호 없는 로마자 표기(`chao! Minh cung rat vui`)는 다른 언어로 오판되기 쉽고, 그러면 아이가 엉뚱한 발음을 듣는다.
 >
 > **`/stt`의 `language`와 형식이 다르다.** `/stt`는 BCP-47 자유 문자열(`ko-KR`), `/tts`는 §1.5 enum이다. `/tts`는 앱이 이미 가진 `nativeLanguage` 값을 그대로 쓰면 되고, 닫힌 집합이라 게이트웨이가 검증할 수 있다.
 >
@@ -452,9 +453,11 @@ Content-Type: application/json
   ③ 응답: userText + aiText + mp3
   ④ 앱 로컬: history에 2턴 추가, mp3 재생
 
-[DIALOGUE 스텝 — 🔊 버튼]
+[DIALOGUE 스텝 — 🔊 버튼]  /  [LISTEN 스텝 — 다시 듣기]
   ① 로컬 캐시 확인 → 있으면 즉시 재생
-  ② 없으면 POST /tts → mp3 캐시 + 재생
+  ② 없으면 POST /tts { text: <앱 번들 문장>, language: "KOREAN" }
+       └ 한국어 문장이어도 language를 넣는다. 필수다
+  ③ mp3 캐시 + 재생
 
 [피드백 화면 — 🔊 상자 두 개]
   ① POST /feedback 응답에서 두 문장을 받아둔다
