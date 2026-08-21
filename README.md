@@ -22,12 +22,20 @@ DB 없음, 무상태(stateless). 비즈니스 로직을 여기에 추가하지 �
 | POST | `/api/v1/ai/tts` | 텍스트 → 음성 |
 | POST | `/api/v1/ai/feedback` | 발화 피드백 생성 |
 
-상세 명세: 프로젝트 문서 `zooearly-ai-api-spec.md` / Swagger: `zooearly-ai-openapi.yaml`
-(yaml을 https://editor.swagger.io 에 붙여넣으면 UI로 볼 수 있다)
+### 문서
 
-> 위 두 문서는 **앱 → 게이트웨이** 규약이다.
-> **게이트웨이 → FastAPI** 규약은 [`docs/zooearly-gateway-to-fastapi.md`](docs/zooearly-gateway-to-fastapi.md)에 따로 있다.
-> FastAPI 담당자에게는 그 문서를 주면 된다.
+| 문서 | 누구를 위한 것 |
+|---|---|
+| [`docs/zooearly-ai-api-spec.md`](docs/zooearly-ai-api-spec.md) | **앱 → 게이트웨이** 규약 (사람용). 맨 앞에 **변경 이력** 표가 있다 |
+| [`docs/zooearly-ai-openapi.yaml`](docs/zooearly-ai-openapi.yaml) | 같은 규약의 OpenAPI. https://editor.swagger.io 에 붙여넣으면 UI로 본다 |
+| [`docs/zooearly-ai-api.types.ts`](docs/zooearly-ai-api.types.ts) | 위 yaml에서 **자동 생성**된 TS 타입. 손으로 고치지 않는다 |
+| [`docs/zooearly-gateway-to-fastapi.md`](docs/zooearly-gateway-to-fastapi.md) | **게이트웨이 → FastAPI** 규약. FastAPI 담당자에게 이걸 주면 된다 |
+
+계약을 바꿀 때는 **yaml을 고치고 → types.ts를 재생성하고 → 버전과 변경 이력을 올린다.**
+
+```bash
+npx openapi-typescript@7 docs/zooearly-ai-openapi.yaml -o docs/zooearly-ai-api.types.ts
+```
 
 ## 기술 스택
 
@@ -50,13 +58,28 @@ export INFERENCE_BASE_URL=http://localhost:8000
 ./gradlew test       # 테스트만
 ```
 
-동작 확인 (FastAPI 없이도 검증 로직까지는 확인 가능):
+동작 확인:
 
 ```bash
 # 400 INVALID_PARAMETER가 §1.2 포맷으로 오면 정상
 curl -X POST http://localhost:8080/api/v1/ai/tts \
   -H "Content-Type: application/json" -d '{}'
 ```
+
+### FastAPI 없이 전 구간 돌려보기
+
+진짜 추론 서버가 없으면 모든 요청이 `502 AI_SERVER_ERROR`로 떨어져 정상 화면을 볼 수 없다.
+`tools/mock-inference/`의 가짜 추론 서버를 8000번에 띄우면 명세대로 생긴 200 응답이 온다.
+
+```bash
+python tools/mock-inference/mock_server.py    # 터미널 1 (표준 라이브러리만 씀)
+./gradlew bootRun                              # 터미널 2
+```
+
+에러 화면 테스트용으로 강제 에러 토큰(`__slow__` `__stt_fail__` 등)도 지원한다.
+자세한 건 [`tools/mock-inference/README.md`](tools/mock-inference/README.md).
+
+> 게이트웨이 코드가 아니다. `src/`와 무관한 개발용 도구이고, 진짜 FastAPI가 뜨면 폴더째 지워도 된다.
 
 ## 패키지 구조
 
@@ -74,17 +97,26 @@ src/main/java/com/zooearly/
 
 ## 협업 규칙
 
-### 브랜치 전략 — GitHub Flow
+### 브랜치 전략
 
-- `main` 은 항상 동작하는 상태를 유지한다. **main에 직접 푸시 금지.**
-- 작업은 `feature/작업내용` 브랜치에서 하고 PR로 합친다.
+상시 유지하는 브랜치는 `main`과 `dev` 둘뿐이다. 나머지는 전부 임시다.
+
+| 브랜치 | 역할 | 규칙 |
+|---|---|---|
+| `main` | 시연·제출 가능한 안정판 | 직접 푸시 금지. `dev`에서만 PR로 들어온다 |
+| `dev` | **기본 브랜치**, 개발 통합 지점 | 직접 푸시 금지. `feature/*`에서 PR로 들어온다 |
+| `feature/작업내용` | 작업용 임시 | `dev`에서 따고 `dev`로 PR. **머지되면 즉시 삭제** |
 
 ```bash
-git switch -c feature/tts-endpoint   # 브랜치 생성
+git switch dev && git pull            # 항상 dev에서 시작
+git switch -c feature/tts-endpoint
 # ... 작업 & 커밋 ...
 git push -u origin feature/tts-endpoint
-# GitHub에서 PR 생성 → 리뷰 → main에 머지 → 브랜치 삭제
+# GitHub에서 PR 생성 (base: dev) → CI 통과 → 머지 → 브랜치 삭제
 ```
+
+발표·배포 시점에만 `dev` → `main` PR을 올린다.
+`main`을 비워두지 않는다 — 항상 "그 시점에 돌아가는 버전"이어야 안전판이 된다.
 
 ### 커밋 컨벤션
 
