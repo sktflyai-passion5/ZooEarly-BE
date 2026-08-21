@@ -294,6 +294,39 @@ class AiErrorContractTest {
         verify(inferenceClient).postJson(anyString(), eq(body));
     }
 
+    // ── tts language (선택 필드) — 명세 §4 ─────────────────────
+
+    @Test
+    @DisplayName("tts: 정의되지 않은 language → 400 + field=language")
+    void ttsRejectsUnknownLanguage() throws Exception {
+        mvc.perform(post(TTS).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"text\":\"안녕\",\"language\":\"ENGLISH\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.field").value("language"));
+    }
+
+    @Test
+    @DisplayName("tts: 모국어 문장도 같은 엔드포인트로 통과한다 — body 가공 없음")
+    void ttsRelaysNativeLanguageSentence() throws Exception {
+        String body = "{\"text\":\"Cho mình nhiều nhé.\",\"language\":\"VIETNAMESE\"}";
+        given(inferenceClient.postJson(anyString(), anyString())).willReturn("{\"success\":true}");
+
+        mvc.perform(post(TTS).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+
+        verify(inferenceClient).postJson(anyString(), eq(body));
+    }
+
+    @Test
+    @DisplayName("tts: language를 생략해도 통과한다 (하위 호환)")
+    void ttsLanguageIsOptional() throws Exception {
+        given(inferenceClient.postJson(anyString(), anyString())).willReturn("{\"success\":true}");
+
+        mvc.perform(post(TTS).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"text\":\"안녕\"}"))
+                .andExpect(status().isOk());
+    }
+
     // ── 정상 경로 ─────────────────────────────────────────────
 
     @Test
