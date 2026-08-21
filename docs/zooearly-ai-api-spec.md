@@ -1,6 +1,6 @@
 # 쥬얼리 (ZooEarly) — AI API 명세서
 
-> **v1.1.0 · 2026-08-21**
+> **v1.2.0 · 2026-08-21**
 > React Native 앱 ↔ API Gateway ↔ FastAPI Inference Server(STT / LLM / TTS → OpenAI API)
 > **이 문서가 기존 `zooearly-api-spec.md`(13개 엔드포인트)를 대체한다.** 시나리오·스토리·진행 상태는 전부 앱 로컬로 이동했고, 서버에 남는 것은 AI 추론뿐이다.
 
@@ -19,6 +19,7 @@
 
 | 버전 | 날짜 | 변경 | 앱 영향 |
 |---|---|---|---|
+| **1.2.0** | 2026-08-21 | `tts`에 `language` **선택** 필드 추가 | 없음 (하위 호환) — 다만 **모국어 문장을 읽을 때는 넣어야** 발음이 맞는다 |
 | **1.1.0** | 2026-08-21 | `chat` / `feedback`에 `nickname` **필수** 필드 추가 | ⚠️ **있음** — 앱이 온보딩에서 받은 닉네임을 매 요청에 보내야 한다. 누락 시 `400 INVALID_PARAMETER` |
 | 1.0.0 | 2026-08-21 | 최초 작성. 엔드포인트 4개 | — |
 
@@ -303,7 +304,9 @@ Content-Type: multipart/form-data
 
 ## 4. POST /api/v1/ai/tts — 텍스트 → 음성
 
-텍스트를 음성으로 바꾼다. `DIALOGUE` 말풍선의 🔊 버튼, `LISTEN` 스텝의 다시 듣기 등 **앱 번들에 이미 있는 문장을 읽어줄 때** 쓴다.
+텍스트를 음성으로 바꾼다. `DIALOGUE` 말풍선의 🔊 버튼, `LISTEN` 스텝의 다시 듣기, 피드백 화면의 자연스러운 표현·모국어 번역 재생에 쓴다.
+
+**한국어 전용이 아니다.** 피드백 화면은 한국어 문장과 모국어 번역을 각각 재생하므로 `language`로 어느 쪽인지 알려준다.
 
 ```http
 POST /api/v1/ai/tts
@@ -317,9 +320,16 @@ Content-Type: application/json
 | `text` | `string` | ✅ | 읽을 문장. 최대 200자 | `"불고기 많이 줄까?"` |
 | `voice` | `string(enum)` | — | `TEACHER` / `FRIEND`. 생략 시 `TEACHER` | `"TEACHER"` |
 | `speed` | `number` | — | 0.5~1.5. 생략 시 `0.9` (아동용 기본 느리게) | `0.9` |
+| `language` | `string(enum)` | — | 읽을 문장의 언어. 생략 시 `KOREAN` | `"VIETNAMESE"` |
 
 ```json
-{ "text": "불고기 많이 줄까?", "voice": "TEACHER", "speed": 0.9 }
+{ "text": "불고기 많이 줄까?", "voice": "TEACHER", "speed": 0.9, "language": "KOREAN" }
+```
+
+모국어 번역을 읽어줄 때 — 피드백 화면 아래쪽 상자
+
+```json
+{ "text": "Cho mình nhiều nhé.", "language": "VIETNAMESE" }
 ```
 
 **Response `200 OK`**
@@ -330,6 +340,10 @@ Content-Type: application/json
 | `audio.data` | `string(base64)` | mp3 바이너리 | `"SUQzBAAA..."` |
 | `audio.format` | `string` | 항상 `"mp3"` | `"mp3"` |
 
+> **`language`를 생략하면 `KOREAN`으로 본다.** 모국어 문장을 읽을 때는 반드시 넣어야 한다. 안 넣으면 FastAPI가 텍스트만 보고 언어를 추측해야 하는데, 성조 부호 없는 로마자 표기(`chao! Minh cung rat vui`)는 다른 언어로 오판되기 쉽다.
+>
+> **`/stt`의 `language`와 형식이 다르다.** `/stt`는 BCP-47 자유 문자열(`ko-KR`), `/tts`는 §1.5 enum이다. `/tts`는 앱이 이미 가진 `nativeLanguage` 값을 그대로 쓰면 되고, 닫힌 집합이라 게이트웨이가 검증할 수 있다.
+>
 > **`voice`는 OpenAI 보이스 ID가 아니라 역할 enum이다.** 역할 → 실제 보이스 매핑(`TEACHER` → `nova` 등)은 FastAPI 설정에 둔다. 보이스를 교체해도 앱과 게이트웨이는 안 바뀐다.
 >
 > **같은 문장의 TTS 결과는 앱이 로컬 캐시한다.** 스텝 문장은 고정 텍스트라 캐시 적중률이 높다 — 같은 문장을 매번 서버에 묻지 않는다.
