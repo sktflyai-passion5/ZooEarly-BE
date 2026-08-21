@@ -108,6 +108,10 @@ Content-Type: text/plain;charset=UTF-8
 Content-Disposition: form-data; name="nativeLanguage"
 Content-Type: text/plain;charset=UTF-8
 VIETNAMESE
+--boundary
+Content-Disposition: form-data; name="nickname"
+Content-Type: text/plain;charset=UTF-8
+민수
 ```
 
 | 파트 | 필수 | 값 |
@@ -116,6 +120,7 @@ VIETNAMESE
 | `scenario` | ✅ | `ARRIVAL` / `CLASS` / `LUNCH` / `DISMISSAL` |
 | `history` | ✅ | JSON **문자열**. 없으면 `"[]"`. 형식 `[{"role":"user"\|"assistant","content":"..."}]` |
 | `nativeLanguage` | — | `KOREAN` / `CHINESE` / `VIETNAMESE`. 생략 시 파트 없음 |
+| `nickname` | ✅ | 아이 호칭(최대 20자). LLM이 말을 걸 때 쓴다. 항상 온다 |
 
 `history`는 파싱된 객체가 아니라 **문자열**이다. FastAPI에서 `json.loads()` 해야 한다.
 
@@ -161,7 +166,7 @@ Content-Length: 65
 Content-Type: application/json
 Content-Length: 145
 
-{"targetSentence":"많이 주세요.","recognizedText":"많이 주세여","scenario":"LUNCH","nativeLanguage":"VIETNAMESE"}
+{"targetSentence":"많이 주세요.","recognizedText":"많이 주세여","scenario":"LUNCH","nativeLanguage":"VIETNAMESE","nickname":"민수"}
 ```
 
 | 필드 | 필수 | 비고 |
@@ -170,6 +175,7 @@ Content-Length: 145
 | `recognizedText` | ✅ | **`null`이 유효값이다.** 단 키는 반드시 있다 (STT 인식 실패 케이스) |
 | `scenario` | — | 시나리오 enum |
 | `nativeLanguage` | — | 언어 enum |
+| `nickname` | ✅ | 아이 호칭(최대 20자). 피드백 문구에 쓴다. 항상 온다 |
 
 ---
 
@@ -189,6 +195,7 @@ async def chat(
     scenario: str = Form(...),
     history: str = Form(...),            # JSON 문자열. json.loads() 필요
     nativeLanguage: Optional[str] = Form(None),   # 생략 시 파트 자체가 없다
+    nickname: str = Form(...),                    # 필수 — 게이트웨이가 검증 후 항상 보낸다
 ):
     ...
 
@@ -217,6 +224,7 @@ class FeedbackRequest(BaseModel):
     recognizedText: Optional[str]        # null이 유효값
     scenario: Optional[str] = None
     nativeLanguage: Optional[str] = None
+    nickname: str
 
 
 @app.post("/ai/feedback")

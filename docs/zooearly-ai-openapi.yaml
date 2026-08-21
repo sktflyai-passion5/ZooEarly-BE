@@ -2,7 +2,7 @@ openapi: 3.0.3
 
 info:
   title: ZooEarly AI API
-  version: 1.0.0
+  version: 1.1.0
   description: |
     쥬얼리 (ZooEarly) — AI API 명세서 (v1.0 · 2026-08-21)
 
@@ -43,7 +43,7 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [audio, scenario, history]
+              required: [audio, scenario, history, nickname]
               properties:
                 audio:
                   type: string
@@ -60,6 +60,11 @@ paths:
                   example: '[{"role":"assistant","content":"불고기 많이 줄까?"}]'
                 nativeLanguage:
                   $ref: '#/components/schemas/NativeLanguage'
+                nickname:
+                  type: string
+                  maxLength: 20
+                  description: 아이 호칭. 앱 온보딩에서 받은 값. 서버는 저장하지 않는다
+                  example: "민수"
       responses:
         '200':
           description: 대화 성공 (STT 인식 실패 포함 — userText가 null일 뿐 에러가 아니다)
@@ -217,7 +222,7 @@ paths:
           application/json:
             schema:
               type: object
-              required: [targetSentence, recognizedText]
+              required: [targetSentence, recognizedText, nickname]
               properties:
                 targetSentence:
                   type: string
@@ -232,6 +237,11 @@ paths:
                   $ref: '#/components/schemas/Scenario'
                 nativeLanguage:
                   $ref: '#/components/schemas/NativeLanguage'
+                nickname:
+                  type: string
+                  maxLength: 20
+                  description: 아이 호칭. 앱 온보딩에서 받은 값. 서버는 저장하지 않는다
+                  example: "민수"
       responses:
         '200':
           description: 피드백 생성 성공
