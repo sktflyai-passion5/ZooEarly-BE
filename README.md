@@ -30,6 +30,7 @@ DB 없음, 무상태(stateless). 비즈니스 로직을 여기에 추가하지 �
 | [`docs/zooearly-ai-openapi.yaml`](docs/zooearly-ai-openapi.yaml) | 같은 규약의 OpenAPI. https://editor.swagger.io 에 붙여넣으면 UI로 본다 |
 | [`docs/zooearly-ai-api.types.ts`](docs/zooearly-ai-api.types.ts) | 위 yaml에서 **자동 생성**된 TS 타입. 손으로 고치지 않는다 |
 | [`docs/zooearly-gateway-to-fastapi.md`](docs/zooearly-gateway-to-fastapi.md) | **게이트웨이 → FastAPI** 규약. FastAPI 담당자에게 이걸 주면 된다 |
+| [`docs/zooearly-screen-api-map.md`](docs/zooearly-screen-api-map.md) | **화면의 어떤 버튼이 어떤 API를 부르는지**. 앱 담당자와 기획용 |
 
 계약을 바꿀 때는 **yaml을 고치고 → types.ts를 재생성하고 → 버전과 변경 이력을 올린다.**
 
