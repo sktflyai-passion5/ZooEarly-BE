@@ -70,7 +70,7 @@ class AiErrorContractTest {
                 .willThrow(new RestClientException("Error while extracting response",
                         new SocketTimeoutException("Read timed out")));
 
-        mvc.perform(post(TTS).contentType(MediaType.APPLICATION_JSON).content("{\"text\":\"안녕\"}"))
+        mvc.perform(post(TTS).contentType(MediaType.APPLICATION_JSON).content("{\"text\":\"안녕\",\"language\":\"KOREAN\"}"))
                 .andExpect(status().isGatewayTimeout())
                 .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.error.code").value("AI_TIMEOUT"));
@@ -83,7 +83,7 @@ class AiErrorContractTest {
                 .willThrow(new ResourceAccessException("timeout",
                         new SocketTimeoutException("Connect timed out")));
 
-        mvc.perform(post(TTS).contentType(MediaType.APPLICATION_JSON).content("{\"text\":\"안녕\"}"))
+        mvc.perform(post(TTS).contentType(MediaType.APPLICATION_JSON).content("{\"text\":\"안녕\",\"language\":\"KOREAN\"}"))
                 .andExpect(status().isGatewayTimeout())
                 .andExpect(jsonPath("$.error.code").value("AI_TIMEOUT"));
     }
@@ -95,7 +95,7 @@ class AiErrorContractTest {
                 .willThrow(new ResourceAccessException("refused",
                         new ConnectException("Connection refused")));
 
-        mvc.perform(post(TTS).contentType(MediaType.APPLICATION_JSON).content("{\"text\":\"안녕\"}"))
+        mvc.perform(post(TTS).contentType(MediaType.APPLICATION_JSON).content("{\"text\":\"안녕\",\"language\":\"KOREAN\"}"))
                 .andExpect(status().isBadGateway())
                 .andExpect(jsonPath("$.error.code").value("AI_SERVER_ERROR"));
     }
@@ -318,12 +318,22 @@ class AiErrorContractTest {
     }
 
     @Test
-    @DisplayName("tts: language를 생략해도 통과한다 (하위 호환)")
-    void ttsLanguageIsOptional() throws Exception {
+    @DisplayName("tts: language를 생략하면 400 + field=language")
+    void ttsRequiresLanguage() throws Exception {
+        mvc.perform(post(TTS).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"text\":\"안녕\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("INVALID_PARAMETER"))
+                .andExpect(jsonPath("$.error.field").value("language"));
+    }
+
+    @Test
+    @DisplayName("tts: 한국어 문장에도 language를 명시해야 통과한다")
+    void ttsAcceptsKoreanWithExplicitLanguage() throws Exception {
         given(inferenceClient.postJson(anyString(), anyString())).willReturn("{\"success\":true}");
 
         mvc.perform(post(TTS).contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"text\":\"안녕\"}"))
+                        .content("{\"text\":\"안녕\",\"language\":\"KOREAN\"}"))
                 .andExpect(status().isOk());
     }
 
