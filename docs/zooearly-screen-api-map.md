@@ -51,7 +51,8 @@
 ⑤ 따라 말하기                "이제 따라 말해볼까요?"
      ┌ 따라 말할 문장 = ④의 naturalSentence. 역시 새로 받지 않는다
      │
-     🔊 [문장 상자]    ──────▶ ④의 한국어 캐시를 그대로 재생 ── 호출 없음
+     🔊 [문장 상자]    ──────▶ ④의 한국어 캐시를 재생 ── 호출 없음  ★ 탭했을 때만
+                             └ 화면에 들어왔다고 저절로 나오지 않는다. 탭해야 재생된다
                              └ ④에서 안 들었다면 그때 POST /tts (같은 문장·같은 키)
      🎤 녹음           ──────▶ API 없음 ★★ 연습 전용 — 채점하지 않는다
                              녹음한 음성을 서버로 보내지 않는다
@@ -244,10 +245,64 @@ POST /api/v1/ai/tts        Content-Type: application/json
 ```
 
 **빈틈이 하나 있다.** ④에서 아이가 🔊를 안 눌렀으면 캐시가 비어 있어서 ⑤에서 처음
-호출하게 된다. 그러면 ⑤에서 몇 초 기다려야 한다.
+호출하게 된다. 그러면 탭하고 나서 몇 초를 기다려야 한다.
 
-→ **④ 화면에 들어올 때 미리 받아두면(prefetch)** 이 빈틈이 없어진다. 아이가 탭하든 안 하든
-⑤에서는 항상 즉시 재생된다. 문장이 짧아 미리 받는 비용도 작다.
+### 그래서 ④ 진입 시 미리 받아둔다 (prefetch)
+
+**화면에 들어오는 즉시 두 문장을 미리 받아 캐시에 넣는다.**
+
+> **미리 받아두는 것이지 미리 재생하는 것이 아니다.** 소리는 **탭했을 때만** 난다.
+> 화면에 들어왔다고 저절로 나오면 안 된다. prefetch의 목적은 **탭한 뒤의 기다림을 없애는 것**이다.
+
+문장이 짧아(200자 이하) 미리 받는 비용도 작다.
+
+**결과를 기다리지 않는다.** 화면은 바로 그리고, 받아오는 건 뒤에서 돌린다.
+실패해도 무시한다 — 아이가 탭하는 순간 어차피 다시 시도한다.
+
+```ts
+// ── TTS 캐시 ──────────────────────────────────────────
+// 키에 language를 넣는다. 같은 글자라도 언어가 다르면 다른 음성이다.
+// voice·speed는 기본값만 쓰므로 키에서 뺐다 — 쓰기 시작하면 키에 추가한다.
+const ttsCache = new Map<string, string>();          // key → base64 mp3
+const cacheKey = (text: string, language: string) => `${language}|${text}`;
+
+async function getTts(text: string, language: string): Promise<string> {
+  const key = cacheKey(text, language);
+  const hit = ttsCache.get(key);
+  if (hit) return hit;                                // 캐시 적중 — 서버를 부르지 않는다
+
+  const res = await fetch(`${BASE_URL}/api/v1/ai/tts`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, language }),         // language는 필수다 (v1.3.0~)
+  });
+  const json = await res.json();
+  if (!json.success) throw new Error(json.error.code);
+
+  const mp3 = json.data.audio.data;
+  ttsCache.set(key, mp3);
+  return mp3;
+}
+
+// ── ④ 자연스러운 표현 화면 ─────────────────────────────
+// 진입하자마자 받아만 둔다. 재생하지 않는다
+useEffect(() => {
+  getTts(naturalSentence, "KOREAN").catch(() => {});   // 기다리지 않는다
+  if (translation) getTts(translation, nativeLanguage).catch(() => {});
+}, [naturalSentence, translation]);
+
+// 🔊 탭 — 여기서만 소리가 난다
+const onSpeakerTap = async (text: string, language: string) => {
+  const mp3 = await getTts(text, language);            // 캐시에 있으면 즉시
+  play(mp3);
+};
+```
+
+⑤ 따라 말하기 화면도 **탭했을 때** `getTts(naturalSentence, "KOREAN")`을 부른다.
+④에서 이미 채워뒀으므로 캐시가 적중해 서버를 부르지 않고, 기다림 없이 바로 소리가 난다.
+
+> 위 캐시는 앱을 껐다 켜면 사라진다. 세션 안에서는 충분하지만, 스텝 문장처럼
+> 계속 반복되는 것은 파일로 저장해두면 더 낫다. 프로토타입 단계에서는 메모리로도 된다.
 
 ### 재생에 맞춰 글자를 강조하고 싶다면
 
