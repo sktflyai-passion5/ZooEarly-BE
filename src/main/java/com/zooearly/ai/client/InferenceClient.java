@@ -17,6 +17,10 @@ import org.springframework.web.client.RestClientResponseException;
  *
  * body는 가공하지 않고 String으로 통과시킨다 — §0.1 릴레이 계약.
  * FastAPI 응답 스키마가 바뀌어도 게이트웨이는 재배포할 필요가 없다.
+ *
+ * 인증: FastAPI가 X-API-Key 헤더를 검사한다 (FastAPI 쪽 DEPLOY_azure.md §4).
+ * inference.api-key가 비어 있으면 헤더를 아예 안 보낸다 — FastAPI도 API_KEY가
+ * 비어 있으면 인증을 안 하므로(로컬 전용) 로컬 개발·목 서버는 그대로 동작한다.
  */
 @Component
 public class InferenceClient {
@@ -26,18 +30,23 @@ public class InferenceClient {
 
     public InferenceClient(
             @Value("${inference.base-url}") String baseUrl,
+            @Value("${inference.api-key:}") String apiKey,
             @Value("${inference.timeout.connect-seconds}") long connectSeconds,
             @Value("${inference.timeout.read-seconds}") long readSeconds,
             @Value("${inference.timeout.chat-read-seconds}") long chatReadSeconds) {
-        this.defaultClient = build(baseUrl, connectSeconds, readSeconds);
-        this.chatClient = build(baseUrl, connectSeconds, chatReadSeconds);
+        this.defaultClient = build(baseUrl, apiKey, connectSeconds, readSeconds);
+        this.chatClient = build(baseUrl, apiKey, connectSeconds, chatReadSeconds);
     }
 
-    private RestClient build(String baseUrl, long connectSeconds, long readSeconds) {
+    private RestClient build(String baseUrl, String apiKey, long connectSeconds, long readSeconds) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(Duration.ofSeconds(connectSeconds));
         factory.setReadTimeout(Duration.ofSeconds(readSeconds));
-        return RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
+        RestClient.Builder builder = RestClient.builder().baseUrl(baseUrl).requestFactory(factory);
+        if (apiKey != null && !apiKey.isBlank()) {
+            builder.defaultHeader("X-API-Key", apiKey);
+        }
+        return builder.build();
     }
 
     /** tts, feedback — JSON body 그대로 전달 */
