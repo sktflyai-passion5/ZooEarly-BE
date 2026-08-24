@@ -493,15 +493,31 @@ src/main/java/com/zooearly/
 
 > **ACR 대신 ghcr.io(GitHub Container Registry)를 쓰면 이미지 저장이 무료다.** 대신 프라이빗 레포라 Container Apps에 pull 인증을 따로 걸어야 해서 한 단계가 늘어난다. 월 $5를 아낄지, 설정을 줄일지의 선택이다.
 
-### 5.3 컨테이너 이미지 — 로컬에서 먼저 확인
+### 5.3 배포 전 테스트 — 로컬에서 다 끝낸다
 
-레포 루트에 `Dockerfile`과 `.dockerignore`가 이미 들어있다. **멀티스테이지 빌드**라 최종 이미지에 JDK·소스·Gradle 캐시가 남지 않는다.
+CD 자동화가 붙기 전이든 후든, **확인 순서는 아래 4단계로 같다.** 앞 단계를 통과 못 하면 다음으로 넘어가지 않는다. 뒤로 갈수록 문제 원인을 찾기 어려워지기 때문이다.
+
+| 단계 | 무엇을 확인하나 | 언제 |
+|---|---|---|
+| ① 자동 테스트 | 검증 규칙·에러 매핑이 명세대로인가 | 커밋할 때마다 (CI 자동) |
+| ② 이미지 단독 기동 | 컨테이너가 뜨고 응답하는가 | 이미지를 고쳤을 때 |
+| ③ 목 서버 연동 | 전 구간이 뚫리고 에러 계약이 맞는가 | 배포 직전 |
+| ④ 진짜 FastAPI | 실제 연동이 되는가 | FastAPI가 떴을 때 |
+
+#### ① 자동 테스트 — CI가 알아서 돈다
 
 ```bash
-# 이미지 빌드
-docker build -t zooearly-gateway:local .
+gradlew.bat test          # Mac/Linux는 ./gradlew test
+```
 
-# 실행 (로컬 확인용 — FastAPI 주소는 아직 안 줘도 된다)
+`dev`/`main`으로 가는 PR·푸시마다 GitHub Actions(`build.yml`)가 같은 걸 돌린다. **여기서 빨간불이 뜨면 머지하지 않는다.**
+
+#### ② 이미지 단독 기동
+
+레포 루트에 `Dockerfile`과 `.dockerignore`가 들어있다. **멀티스테이지 빌드**라 최종 이미지에 JDK·소스·Gradle 캐시가 남지 않는다.
+
+```bash
+docker build -t zooearly-gateway:local .
 docker run --rm -p 8080:8080 zooearly-gateway:local
 ```
 
@@ -512,6 +528,64 @@ curl -X POST http://localhost:8080/api/v1/ai/tts \
   -H "Content-Type: application/json" -d '{}'
 # {"success":false,"error":{"code":"INVALID_PARAMETER",...,"field":"text"}}
 ```
+
+FastAPI 주소를 안 줬으므로 **여기서는 400(검증 실패)까지만 확인**한다. 정상 200을 보려면 ③으로 간다.
+
+#### ③ 목 서버를 붙여 전 구간 확인 ★
+
+진짜 FastAPI 없이도 정상 응답과 에러 화면을 전부 볼 수 있다. 터미널 두 개가 필요하다.
+
+```bash
+# 터미널 1 — 가짜 추론 서버
+python tools/mock-inference/mock_server.py
+
+# 터미널 2 — 게이트웨이 컨테이너
+docker run --rm -p 8080:8080 \
+  -e INFERENCE_BASE_URL=http://host.docker.internal:8000 \
+  zooearly-gateway:local
+```
+
+> ### ⚠️ `localhost`가 아니라 `host.docker.internal`이다
+>
+> **컨테이너 안에서 `localhost`는 컨테이너 자기 자신을 가리킨다.** 내 PC가 아니다.
+> `INFERENCE_BASE_URL=http://localhost:8000`으로 주면 목 서버가 멀쩡히 떠 있어도
+> **전부 `502 AI_SERVER_ERROR`가 난다.** 컨테이너에서 호스트(내 PC)를 부르려면
+> `host.docker.internal`을 쓴다. (Docker Desktop 기준. 로컬 개발에서만 쓰는 주소이고
+> 배포된 Container Apps에서는 진짜 FastAPI 주소가 들어간다.)
+
+준비됐으면 스모크 테스트를 돌린다.
+
+```bash
+./tools/smoke-test.sh http://localhost:8080
+```
+
+```
+  OK   검증실패           400 INVALID_PARAMETER
+  OK   정상                 200 -
+  OK   STT엔진죽음        422 STT_FAILED
+  OK   쿼터초과           429 RATE_LIMITED
+  OK   추론서버5xx        502 AI_SERVER_ERROR
+  OK   타임아웃           504 AI_TIMEOUT
+  통과 6 / 실패 0
+```
+
+**6개가 전부 OK여야 배포한다.** 정상 경로뿐 아니라 **에러 계약**(422/429는 FastAPI 응답을 그대로 통과, 나머지는 게이트웨이가 공통 포맷으로 감쌈)까지 한 번에 확인된다. 타임아웃 케이스가 있어 15초쯤 걸린다.
+
+#### ④ 진짜 FastAPI 연동
+
+`INFERENCE_BASE_URL`을 실제 주소로 바꾸고, 인증 키가 필요하면 같이 준다.
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e INFERENCE_BASE_URL=https://<FastAPI 주소> \
+  -e INFERENCE_API_KEY=<키> \
+  zooearly-gateway:local
+```
+
+강제 에러 토큰(`__slow__` 등)은 **목 서버만 이해한다.** 진짜 FastAPI에서는 정상 경로와 검증 실패만 의미가 있다.
+
+> **배포한 뒤에도 같은 스크립트를 쓴다.** 주소만 바꾸면 된다 —
+> `./tools/smoke-test.sh https://<FQDN>` (§5.7)
 
 **서버에 올리기 전에 이걸 먼저 통과시킨다.** 로컬에서 안 되는 이미지는 Azure에서도 안 된다.
 
@@ -599,7 +673,13 @@ curl -X POST https://$FQDN/api/v1/ai/tts \
   -H "Content-Type: application/json" -d '{}'
 ```
 
-400 에러가 명세 포맷으로 오면 **배포 성공이다.**
+400 에러가 명세 포맷으로 오면 **배포 성공이다.** 스모크 테스트도 같은 주소로 돌릴 수 있다.
+
+```bash
+./tools/smoke-test.sh https://$FQDN
+```
+
+단, 강제 에러 토큰은 목 서버만 이해하므로 **진짜 FastAPI를 붙인 상태에서는 `검증실패`·`정상` 두 개만 통과하는 게 정상**이다 (§5.3 ④).
 
 로그 보기:
 
@@ -611,14 +691,16 @@ az containerapp logs show --name zooearly-gateway --resource-group zooearly-rg -
 
 **헬스체크는 Azure가 "이 서버 아직 살아있냐?"를 주기적으로 물어보는 것이다.** 프로세스가 떠 있어도 실제로는 응답을 못 하는 상태가 있을 수 있어서, 포트만 보고 판단하지 않으려는 장치다.
 
-**현재 설정: 별도 probe를 걸지 않았다.** Container Apps가 기본으로 TCP 확인(8080 포트가 열려 있나)을 하고, 컨테이너가 죽으면 자동으로 재시작한다. 데모·발표 규모에서는 이걸로 충분하다.
+**결정: 별도 probe를 걸지 않고 Container Apps 기본 TCP 확인을 쓴다.** 8080 포트가 열려 있는지를 보고, 컨테이너가 죽으면 자동으로 재시작한다. 데모·발표 규모에서는 이걸로 충분하다.
 
-더 정확한 헬스체크를 원하면 Spring Boot Actuator를 넣어 `/actuator/health`를 쓰는 방법이 있다. 다만 **엔드포인트가 하나 늘어나는 변경이라 팀 확인 후에 넣는다** (CLAUDE.md: 엔드포인트를 임의로 추가하지 않는다). 장단점은 아래 표와 같다.
+Spring Boot Actuator를 넣어 `/actuator/health`를 쓰는 선택지도 있었지만 **택하지 않았다.** 엔드포인트가 하나 늘어나는 변경인데(CLAUDE.md: 엔드포인트를 임의로 추가하지 않는다), 그만큼의 이득이 이 규모에서는 크지 않다고 판단했다.
 
 | 방식 | 잡아내는 것 | 비용 |
 |---|---|---|
-| **TCP (현재)** | 프로세스가 죽거나 포트가 닫힘 | 설정 0 |
+| **TCP** ✅ 채택 | 프로세스가 죽거나 포트가 닫힘 | 설정 0 |
 | Actuator `/actuator/health` | 위 + Spring이 정상 기동했는지, 요청 받을 준비가 됐는지 | 의존성 1줄 + 설정 |
+
+> **나중에 바꿀 만한 시점**: 트래픽이 늘어 인스턴스를 여러 개 굴리게 되거나, 재배포 중 순간적인 502가 눈에 띄기 시작하면 그때 Actuator를 넣는다. 그 전까지는 TCP로 충분하다.
 
 ### 5.9 코드를 수정했을 때 (재배포)
 
