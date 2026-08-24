@@ -17,6 +17,16 @@ spring:
 
 inference:
   base-url: ${INFERENCE_BASE_URL:http://localhost:8000}  # FastAPI 주소. 배포 시 환경변수로 주입
+
+  # FastAPI 쪽 경로. 게이트웨이가 앱에 노출하는 /api/v1/ai/* 와 이름이 달라도 된다.
+  # 하드코딩하지 않는 이유: FastAPI가 경로를 바꿔도 이 파일만 고치면 되게 하기 위함이다.
+  # 앱 계약(/api/v1/ai/*)은 이것과 무관하게 그대로다.
+  path:
+    chat: ${INFERENCE_PATH_CHAT:/internal/v1/chat}
+    stt: ${INFERENCE_PATH_STT:/internal/v1/speech/transcribe}
+    tts: ${INFERENCE_PATH_TTS:/internal/v1/speech/synthesize}
+    feedback: ${INFERENCE_PATH_FEEDBACK:/internal/v1/feedback/expression}
+    pronunciation: ${INFERENCE_PATH_PRONUNCIATION:/internal/v1/feedback/speaking}
   timeout:
     connect-seconds: 3         # 명세 §0.4
     read-seconds: 15           # stt / tts / feedback

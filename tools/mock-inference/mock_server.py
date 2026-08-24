@@ -44,6 +44,21 @@ AUDIO = {"data": silent_mp3_base64(1.0), "format": "mp3"}
 # 앱은 어떤 에러에서도 "괜찮아, 다시 해볼까?"로 폴백해야 한다 (명세 §0.4).
 # 그 화면을 보려면 에러를 일부러 낼 수단이 필요하다.
 # 텍스트나 파일명에 아래 토큰을 넣으면 해당 상황을 재현한다.
+# 게이트웨이 application.yml 의 inference.path.* 와 같은 값이어야 한다.
+# 옛 /ai/* 도 함께 받아 설정 전환 중에도 끊기지 않게 한다.
+ROUTES = {
+    "/internal/v1/chat": "chat",
+    "/internal/v1/speech/transcribe": "stt",
+    "/internal/v1/speech/synthesize": "tts",
+    "/internal/v1/feedback/expression": "feedback",
+    "/internal/v1/feedback/speaking": "pronunciation",
+    "/ai/chat": "chat",
+    "/ai/stt": "stt",
+    "/ai/tts": "tts",
+    "/ai/feedback": "feedback",
+    "/ai/pronunciation": "pronunciation",
+}
+
 TRIGGERS = {
     "__slow__":       ("느린 응답 — 게이트웨이 타임아웃(504) 유발", None),
     "__stt_fail__":   ("422 STT_FAILED", 422),
@@ -163,19 +178,21 @@ class Handler(BaseHTTPRequestHandler):
                     self._fail(status)
                 return
 
-        route = self.path.rstrip("/")
-        if route == "/ai/chat":
+        # FastAPI 담당자가 정한 실제 경로. 게이트웨이의 application.yml 과 맞춰야 한다.
+        # 옛 /ai/* 경로도 함께 받아준다 — 설정을 바꾸는 중에 둘 다 들어올 수 있다.
+        route = ROUTES.get(self.path.rstrip("/"))
+        if route == "chat":
             nickname = fields.get("nickname", "친구")
             self._ok({
                 "userText": "네, 많이 주세요.",
                 "aiText": "%s야, 그래! 많이 줄게. 맛있게 먹어." % nickname,
                 "audio": AUDIO,
             })
-        elif route == "/ai/stt":
+        elif route == "stt":
             self._ok({"text": "많이 주세여", "confidence": 0.92})
-        elif route == "/ai/tts":
+        elif route == "tts":
             self._ok({"audio": AUDIO})
-        elif route == "/ai/feedback":
+        elif route == "feedback":
             nickname = fields.get("nickname", "친구")
             native = fields.get("nativeLanguage", "KOREAN")
             self._ok({
@@ -189,13 +206,35 @@ class Handler(BaseHTTPRequestHandler):
                 "highlightWords": ["주세요"],
                 "translation": None if native == "KOREAN" else "Cho mình nhiều nhé.",
             })
+        elif route == "pronunciation":
+            # 목표 문장을 어절로 쪼개고, 가운데 어절 하나를 "제일 약한 곳"으로 고정한다.
+            # 실제 모델은 z 점수로 고르지만, 여기서는 화면 배선 확인이 목적이다.
+            sentence = fields.get("targetSentence", "안녕! 나도 만나서 반가워")
+            words = sentence.split()
+            idx = min(2, len(words) - 1) if words else 0
+            scored = []
+            for i, w in enumerate(words):
+                z = -1.82 if i == idx else round(-0.55 + i * 0.29, 2)
+                scored.append({"word": w, "z": z, "warn": i == idx,
+                               "worstPhone": "ㄴ" if i == idx else None})
+            quiz = list(words)
+            if quiz:
+                quiz[idx] = "＿＿＿"
+            self._ok({
+                "sentence": sentence,
+                "targetWord": words[idx] if words else None,
+                "targetIndex": idx if words else None,
+                "targetZ": -1.82 if words else None,
+                "quizSentence": " ".join(quiz),
+                "words": scored,
+            })
         else:
             self._send(404, {"detail": "no such route: %s" % self.path})
 
     def do_GET(self):
         """브라우저로 열어 살아있는지 확인하는 용도."""
-        self._send(200, {"mock": "inference", "routes":
-                         ["/ai/chat", "/ai/stt", "/ai/tts", "/ai/feedback"]})
+        self._send(200, {"mock": "inference",
+                         "routes": sorted(ROUTES)})
 
     # ── 로그 ────────────────────────────────────────────────
     def _log(self, fields):
