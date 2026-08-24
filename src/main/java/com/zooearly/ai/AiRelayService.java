@@ -7,6 +7,7 @@ import com.zooearly.common.exception.BusinessException;
 import com.zooearly.common.response.ErrorCode;
 import java.io.IOException;
 import java.util.Set;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
@@ -32,9 +33,30 @@ public class AiRelayService {
     private final InferenceClient inferenceClient;
     private final ObjectMapper objectMapper;
 
-    public AiRelayService(InferenceClient inferenceClient, ObjectMapper objectMapper) {
+    /**
+     * FastAPI 쪽 경로. 앱에 노출하는 /api/v1/ai/* 와 이름이 같을 필요가 없다.
+     * 설정에서 주입받는 이유: FastAPI가 경로를 바꿔도 재배포 없이 application.yml만
+     * 고치면 되고, 앱 계약은 그대로 유지되기 때문이다.
+     */
+    private final String chatPath;
+    private final String sttPath;
+    private final String ttsPath;
+    private final String feedbackPath;
+    private final String pronunciationPath;
+
+    public AiRelayService(InferenceClient inferenceClient, ObjectMapper objectMapper,
+                          @Value("${inference.path.chat}") String chatPath,
+                          @Value("${inference.path.stt}") String sttPath,
+                          @Value("${inference.path.tts}") String ttsPath,
+                          @Value("${inference.path.feedback}") String feedbackPath,
+                          @Value("${inference.path.pronunciation}") String pronunciationPath) {
         this.inferenceClient = inferenceClient;
         this.objectMapper = objectMapper;
+        this.chatPath = chatPath;
+        this.sttPath = sttPath;
+        this.ttsPath = ttsPath;
+        this.feedbackPath = feedbackPath;
+        this.pronunciationPath = pronunciationPath;
     }
 
     // ── chat ──────────────────────────────────────────────
@@ -57,7 +79,7 @@ public class AiRelayService {
             parts.add("nativeLanguage", nativeLanguage);
         }
         parts.add("nickname", nickname);
-        return inferenceClient.postMultipartChat("/ai/chat", parts);
+        return inferenceClient.postMultipartChat(chatPath, parts);
     }
 
     // ── stt ───────────────────────────────────────────────
@@ -70,7 +92,7 @@ public class AiRelayService {
         if (language != null) {
             parts.add("language", language);
         }
-        return inferenceClient.postMultipart("/ai/stt", parts);
+        return inferenceClient.postMultipart(sttPath, parts);
     }
 
     // ── tts ───────────────────────────────────────────────
@@ -101,7 +123,7 @@ public class AiRelayService {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER, "language");
         }
         requireEnum(language.asText(), LANGUAGES, "language");
-        return inferenceClient.postJson("/ai/tts", rawBody);
+        return inferenceClient.postJson(ttsPath, rawBody);
     }
 
     // ── feedback ──────────────────────────────────────────
@@ -127,7 +149,28 @@ public class AiRelayService {
             throw new BusinessException(ErrorCode.INVALID_PARAMETER, "nickname");
         }
         validateNickname(nickname.asText());
-        return inferenceClient.postJson("/ai/feedback", rawBody);
+        return inferenceClient.postJson(feedbackPath, rawBody);
+    }
+
+    // ── pronunciation ─────────────────────────────────────
+
+    /**
+     * 발음 채점 — 명세 §6.
+     *
+     * /feedback(표현 교정)과 다르다. 저쪽은 "어떤 단어를 골랐나"를 텍스트로 보고,
+     * 이쪽은 "어떻게 소리 냈나"를 오디오로 본다. 그래서 STT를 거치지 않고
+     * 녹음을 그대로 보낸다 — 텍스트로는 발음을 알 수 없기 때문이다.
+     */
+    public String pronunciation(MultipartFile audio, String targetSentence) {
+        validateAudio(audio);
+        if (targetSentence == null || targetSentence.isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "targetSentence");
+        }
+
+        MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
+        parts.add("audio", audio.getResource());
+        parts.add("targetSentence", targetSentence);
+        return inferenceClient.postMultipart(pronunciationPath, parts);
     }
 
     // ── 검증 헬퍼 ─────────────────────────────────────────
