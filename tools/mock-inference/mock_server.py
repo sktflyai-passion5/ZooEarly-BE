@@ -53,12 +53,14 @@ ROUTES = {
     "/internal/v1/feedback/expression": "feedback",
     "/internal/v1/feedback/speaking": "pronunciation",
     "/internal/v1/feedback/sentences": "sentences",
+    "/internal/v1/story/generate": "story",
     "/ai/chat": "chat",
     "/ai/stt": "stt",
     "/ai/tts": "tts",
     "/ai/feedback": "feedback",
     "/ai/pronunciation": "pronunciation",
     "/ai/pronunciation/sentences": "sentences",
+    "/ai/story": "story",
 }
 
 # FastAPI 명세(2026-08-24 개정) 그대로. 등교·급식·하교 × 3개 + 수업시간(study) × 1개.
@@ -207,6 +209,30 @@ class Handler(BaseHTTPRequestHandler):
                 "aiText": "%s야, 그래! 많이 줄게. 맛있게 먹어." % nickname,
                 "audio": AUDIO,
             })
+        elif route == "story":
+            # 4개 장면을 요청 순서 그대로 되돌려준다. 앱이 화면에 뿌릴 때
+            # 순서·카테고리가 요청과 일치하는지 바로 확인할 수 있다 (명세 §7).
+            child = fields.get("childName", "친구")
+            scenes_in = fields.get("scenes") or []
+            titles = {
+                "school_arrival": ("첫 만남의 아침", "교문 앞이었어요"),
+                "class": ("시를 읽은 시간", "교실 문을 열자"),
+                "lunch": ("점심의 소리", "맛있는 냄새가 났어요"),
+                "school_departure": ("하굣길의 인사", "가방을 메고 나서니"),
+            }
+            out = []
+            for sc in scenes_in:
+                cat = sc.get("category", "")
+                subtitle, opening = titles.get(cat, ("어느 장면", "그러고 나서"))
+                out.append({
+                    "category": cat,
+                    "subtitle": subtitle,
+                    "opening": opening,
+                    # 아이가 고른 말이 없으면 null — 명세대로 인용을 비운다
+                    "quote": sc.get("childSaid") or None,
+                    "narration": "%s가 %s. 오늘도 씩씩하게 해냈어요." % (child, opening),
+                })
+            self._ok({"title": "오늘의 학교 동화", "scenes": out})
         elif route == "stt":
             self._ok({"text": "많이 주세여", "confidence": 0.92})
         elif route == "tts":

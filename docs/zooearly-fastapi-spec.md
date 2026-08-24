@@ -6,7 +6,7 @@
 | 항목 | 값 |
 |---|---|
 | Base Path | `/internal/v1` |
-| 엔드포인트 | **6개** — STT / TTS / 번역 / 말하기 피드백 / 추천 문장 목록 / 낭독 피드백 |
+| 엔드포인트 | **7개** — STT / TTS / 번역 / 말하기 피드백 / 추천 문장 목록 / 낭독 피드백 / 동화 생성 |
 | 담당 | 주아연 (STT·TTS) |
 
 ## 엔드포인트 요약
@@ -17,8 +17,9 @@
 | 2 | POST | `/internal/v1/speech/synthesize` | 음성 합성 (TTS) | JSON | **바이너리 (audio/mpeg)** |
 | 3 | POST | `/internal/v1/text/translate` | 번역 | JSON | JSON |
 | 4 | POST | `/internal/v1/feedback/speaking` | 말하기 피드백 | **multipart** | JSON |
-| 5 | GET | `/internal/v1/feedback/sentences` | 발음 연습 추천 문장 10개 | - | JSON |
+| 5 | GET | `/internal/v1/feedback/sentences` | 발음 연습 추천 문장 9개 | - | JSON |
 | 6 | POST | `/internal/v1/feedback/reading` | 낭독 피드백 | (미작성) | (미작성) |
+| 7 | POST | `/internal/v1/story/generate` | 동화 생성 | JSON | JSON |
 
 ---
 
@@ -224,7 +225,7 @@ Content-Type: multipart/form-data
 | 필드 | 타입 | 필수 | 설명 |
 |---|---|---|---|
 | `audio_file` | file | ✅ | 녹음 파일. `SCORING_MAX_UPLOAD_MB`(기본 20MB) 이하 |
-| `sentence_id` | string (enum) | ✅ | `GET /internal/v1/feedback/sentences`에서 받은 10개 값 중 하나. `arrival_1`, `arrival_2`, `arrival_3`, `study_1`, `lunch_1`, `lunch_2`, `lunch_3`, `departure_1`, `departure_2`, `departure_3` |
+| `sentence_id` | string (enum) | ✅ | `GET /internal/v1/feedback/sentences`에서 받은 9개 값 중 하나. `arrival_1`, `arrival_2`, `arrival_3`, `lunch_1`, `lunch_2`, `lunch_3`, `departure_1`, `departure_2`, `departure_3` |
 
 ## 3️⃣ Response
 
@@ -272,7 +273,7 @@ Content-Type: multipart/form-data
 
 ## 1️⃣ API 설명
 
-발음 연습용 추천 문장 10개(등교·급식·하교 3개씩 + 수업시간 시 1개)를 반환합니다.
+발음 연습용 추천 문장 9개(카테고리 3개 × 3개)를 반환합니다.
 
 > **이 API는 프론트가 직접 부르는 게 아니라, Spring이 내부망에서 이 FastAPI 서버로 호출한 뒤 Spring 자체 API로 프론트에 재노출하는 용도입니다.**
 > 프론트가 이 중 1개를 고르면, 그 `sentence_id`와 녹음 파일을 `POST /internal/v1/feedback/speaking`으로 보내 채점합니다.
@@ -292,15 +293,14 @@ GET /internal/v1/feedback/sentences
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | `sentence_id` | string | 채점 API(`POST /internal/v1/feedback/speaking`)를 호출할 때 그대로 넘겨야 하는 값. Spring이 프론트에 내려줄 때도 이 값을 그대로 보존해야 합니다(프론트가 문장을 선택하면 이 id를 다시 Spring에 보내고, Spring이 채점 API를 호출할 때 이 id를 그대로 씁니다). |
-| `category` | string | `arrival`(등교) / `study`(수업시간) / `lunch`(점심) / `departure`(하교) 4가지 중 하나. 카테고리 화면 그룹핑용. |
-| `text` | string | 화면에 보여줄 실제 문장 원문. `study`만 여러 문장이 한 항목에 이어져 있다 — 시 전체를 한 번에 읽는다. |
+| `category` | string | `arrival`(등교) / `lunch`(점심) / `departure`(하교) 3가지 중 하나. 카테고리 화면 그룹핑용. |
+| `text` | string | 화면에 보여줄 실제 문장 원문. |
 
 ```json
 [
   { "sentence_id": "arrival_1",   "category": "arrival",   "text": "안녕 나도 만나서 반가워 !" },
   { "sentence_id": "arrival_2",   "category": "arrival",   "text": "안녕! 우리 친하게 지내자" },
   { "sentence_id": "arrival_3",   "category": "arrival",   "text": "안녕 잘 부탁해 !" },
-  { "sentence_id": "study_1",     "category": "study",     "text": "노란 꽃이 피었어요. 예쁜 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요." },
   { "sentence_id": "lunch_1",     "category": "lunch",     "text": "조금만 주세요." },
   { "sentence_id": "lunch_2",     "category": "lunch",     "text": "적당히 주세요." },
   { "sentence_id": "lunch_3",     "category": "lunch",     "text": "많이 주세요." },
@@ -309,9 +309,6 @@ GET /internal/v1/feedback/sentences
   { "sentence_id": "departure_3", "category": "departure", "text": "안녕히 계세요 !" }
 ]
 ```
-
-`study`는 다른 카테고리와 달리 **1개뿐이다** (3개씩이 아니다). 시가 하나뿐이라
-고를 필요가 없어서인 것으로 보인다.
 
 ## 4️⃣ API 수정 로그
 
@@ -323,6 +320,127 @@ GET /internal/v1/feedback/sentences
 
 > **아직 상세 명세가 작성되지 않았다.** Notion 표에 경로만 등록된 상태다.
 > 요청·응답 형식이 정해지면 이 문서에 추가한다.
+
+---
+
+# 7. POST /internal/v1/story/generate — 동화 생성
+
+## 0️⃣ 어떤 View 에서 사용되는 API 인가요?
+
+동화 생성 장면
+
+## 1️⃣ API 설명
+
+등교/수업/점심/하교 4개 카테고리 플레이 기록을 받아, LLM(`OPENAI_LLM_MODEL`)이 장면마다 소제목/전환구/인용/내레이션을 담은 동화로 이어 붙여 반환합니다.
+
+## 2️⃣ Request
+
+### Request Body (`application/json`)
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `child_name` | `string` | ✅ | 아이 이름. 내레이션에 쓰인다 |
+| `scenes` | `list[SceneInput]` | ✅ | 정확히 4개, 순서는 `school_arrival → class → lunch → school_departure` 고정 |
+| `scenes[].category` | `StoryCategory` | ✅ | 4개 값 중 하나, 중복·누락 불가 |
+| `scenes[].partner_line` | `string \| null` | 조건부 | 대화 장면(등교/점심/하교) **필수**. 상대방이 아이에게 한 말 |
+| `scenes[].child_said` | `string \| null` | ❌ | 대화 장면에서 아이가 고른 문장. 없으면 `null` |
+| `scenes[].poem_text` | `string \| null` | 조건부 | 수업(`class`) 장면 **필수**. 아이가 읽은 동시 전문 |
+| `scenes[].practiced_word` | `string \| null` | ❌ | 발음이 약해 연습한 낱말(발음 피드백 API의 `target_word`). 없으면 `null` |
+
+```json
+// Request Body 예시
+{
+  "child_name": "지우",
+  "scenes": [
+    {
+      "category": "school_arrival",
+      "partner_line": "안녕! 오늘도 만나서 반가워",
+      "child_said": "안녕! 나도 만나서 반가워 !"
+    },
+    {
+      "category": "class",
+      "poem_text": "노란 꽃이 피었어요. 예쁜 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요.",
+      "practiced_word": "살랑살랑"
+    },
+    {
+      "category": "lunch",
+      "partner_line": "오늘 반찬 맛있게 먹어요",
+      "child_said": "조금만 주세요."
+    },
+    {
+      "category": "school_departure",
+      "partner_line": "오늘도 수고했어, 내일 봐",
+      "child_said": "선생님, 안녕히 가세요!"
+    }
+  ]
+}
+```
+
+## 3️⃣ Response
+
+### ✅ 성공 (200 OK)
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `title` | `string` | 동화 제목 (예: "오늘의 학교 동화") |
+| `scenes` | `list[SceneOutput]` | 요청과 동일한 개수·순서·카테고리 |
+| `scenes[].category` | `StoryCategory` | 요청의 해당 장면과 동일한 값 |
+| `scenes[].subtitle` | `string` | 장면 소제목 (4~10음절) |
+| `scenes[].opening` | `string` | 장면을 여는 전환구 |
+| `scenes[].quote` | `string \| null` | 아이가 한 말(`child_said`를 그대로 인용). 없으면 `null` |
+| `scenes[].narration` | `string` | LLM이 생성한 동화 문장(2~3문장). 새 사건·인물 없이 실제 기록만 기반으로 서술 |
+
+```json
+{
+  "title": "오늘의 학교 동화",
+  "scenes": [
+    {
+      "category": "school_arrival",
+      "subtitle": "첫 만남의 아침",
+      "opening": "교문 앞이었어요",
+      "quote": "안녕! 나도 반가워",
+      "narration": "지우가 교문 앞에 서 있었어요. 친구가 밝게 인사했지요. 지우가 두근두근 어깨가 들썩였어요."
+    },
+    {
+      "category": "class",
+      "subtitle": "받아쓰기 시간",
+      "opening": "교실 문을 열자",
+      "quote": "네, 열심히 할게요",
+      "narration": "지우가 조용히 교실에 들어갔어요. 선생님이 받아쓰기를 한다고 하셨답니다."
+    },
+    {
+      "category": "lunch",
+      "subtitle": "점심의 소리",
+      "opening": "맛있는 냄새가 났어요",
+      "quote": null,
+      "narration": "지우가 급식실에 들어갔어요. 급식 선생님이 반찬을 맛있게 먹으라고 하셨어요."
+    },
+    {
+      "category": "school_departure",
+      "subtitle": "하굣길의 인사",
+      "opening": "가방을 메고 나서니",
+      "quote": "내일 봐요!",
+      "narration": "지우가 가방을 메고 교실을 나왔어요. 선생님이 오늘도 수고했다고 하셨지요."
+    }
+  ]
+}
+```
+
+### ❌ 실패
+
+| status_code | 상황 | detail |
+|---|---|---|
+| 422 | `scenes` 개수가 4개가 아님 | `"scenes는 반드시 4개(등교/수업/점심/하교)여야 합니다."` |
+| 422 | `scenes`의 카테고리가 4종을 각 1개씩(고정 순서) 포함하지 않음 | `"scenes의 카테고리 또는 순서가 올바르지 않습니다. (등교→수업→점심→하교 순서 필요)"` |
+| 422 | `partner_line`이 빈 문자열인 장면이 있음 | `"상대방 대사가 비어 있는 장면이 있습니다."` |
+| 502 | LLM 호출 실패(OpenAI API 오류/타임아웃) | `"동화 생성 서비스에 연결할 수 없습니다."` |
+
+## 4️⃣ API 수정 로그
+
+- 2026-08-24 — 요청 필드 개편. `child_action` 삭제 → `child_name`(최상위, 신규) + `partner_line`(구 `child_action` 자리, **의미가 아이의 행동 → 상대방의 대사로 바뀜**) + `child_said`(구 `child_speech`, nullable로 변경). 수업 장면용 `poem_text`·`practiced_word` 추가. 응답도 `narration` 하나에서 `subtitle`/`opening`/`quote`/`narration` 4개로 확장. 422 메시지도 "행동 기록 또는 대사가 비어 있는…" → "상대방 대사가 비어 있는…"으로 변경.
+- 초기 설계 — `scenes[].child_action` + `child_speech`(둘 다 필수, 빈 문자열 불가) → 장면별 `narration` 1문장.
+
+> ⚠️ **Spring 게이트웨이에 공유 필요.** 필드명과 의미가 함께 바뀌었다(`child_action` → `partner_line`은 이름만이 아니라 **누가 한 말인지가 반대**다). 게이트웨이가 body를 그대로 통과시키므로 코드 수정은 없지만, 앱 쪽 요청 구성이 바뀌어야 한다.
 
 ---
 

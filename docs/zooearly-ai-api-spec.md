@@ -1,6 +1,6 @@
 # 쥬얼리 (ZooEarly) — AI API 명세서
 
-> **v1.6.0 · 2026-08-24**
+> **v1.7.0 · 2026-08-24**
 > React Native 앱 ↔ API Gateway ↔ FastAPI Inference Server(STT / LLM / TTS → OpenAI API)
 > **이 문서가 기존 `zooearly-api-spec.md`(13개 엔드포인트)를 대체한다.** 시나리오·스토리·진행 상태는 전부 앱 로컬로 이동했고, 서버에 남는 것은 AI 추론뿐이다.
 
@@ -19,6 +19,7 @@
 
 | 버전 | 날짜 | 변경 | 앱 영향 |
 |---|---|---|---|
+| **1.7.0** | 2026-08-24 | `story`(동화 생성) 추가 — 하루치 4장면을 동화로 엮는다 | ⚠️ **있음** — 앱이 등교·수업·점심·하교 기록을 **모아뒀다가** 한 번에 보내야 한다. 서버는 저장하지 않는다(무상태). 응답이 오래 걸려(최대 60초) 로딩 화면이 필요하다 |
 | **1.6.0** | 2026-08-24 | `pronunciation/sentences`에 `study`(수업시간 시) 카테고리 추가. 9개 → **10개** | ⚠️ **있음** — 수업시간 "같이 읽어볼까요?"도 이제 이 목록의 `sentenceId`로 `/pronunciation`을 부를 수 있다. `study`는 3개가 아니라 1개다 |
 | **1.5.0** | 2026-08-24 | `pronunciation/sentences` 신설 · `pronunciation`의 `targetSentence`→`sentenceId` 전환 · `quizSentence` 제거 · 잘함/못함 판정이 앱→FastAPI로 이동 | ⚠️ **있음** — "표현 고르기" 선택지가 앱 번들이 아니라 서버 목록이 된다. `/pronunciation` 요청 필드명이 바뀐다. 빈칸 문장은 앱이 직접 만들어야 한다 |
 | **1.4.0** | 2026-08-22 | `pronunciation`(발음 채점) 추가 · 오디오 **최대 길이 60초 → 30초** | ⚠️ **있음** — 녹음을 30초에서 끊어야 한다. 발음 피드백 화면은 신규 구현 |
@@ -593,9 +594,76 @@ GET /api/v1/ai/pronunciation/sentences
 | §5 | POST | `/api/v1/ai/feedback` | 텍스트 2개 (JSON) | **표현 교정** 객체 | 이렇게 말하면 더 자연스러워요 — **현재 쓰는 화면 없음** |
 | §6 | POST | `/api/v1/ai/pronunciation` | 음성 + `sentenceId` (multipart) | **발음 채점** 객체 | 발음 피드백 (빈칸 퀴즈) |
 | §6-1 | GET | `/api/v1/ai/pronunciation/sentences` | 없음 | 문장 10개 배열 | 어떤 표현을 사용해볼까요?, 같이 읽어볼까요? |
+| §6-2 | POST | `/api/v1/ai/story` | 하루치 4장면 (JSON) | **동화** 객체 | 동화 생성 |
 
 > `feedback`과 `pronunciation`은 성격이 다르다. 전자는 **어떤 단어를 골랐나**(텍스트),
 > 후자는 **어떻게 소리 냈나**(오디오)를 본다. 화면도 다르다.
+
+---
+
+## 6-2. POST /api/v1/ai/story — 동화 생성
+
+하루치 플레이 기록 4장면을 받아 LLM이 동화로 엮어 돌려준다.
+
+**다른 엔드포인트와 다른 점**: "방금 한 행동"이 아니라 **"오늘 한 일 전부"** 를 한 번에 보낸다.
+그 기록을 모아두는 것은 **앱의 몫**이다 — 서버는 아무것도 저장하지 않는다(§0 무상태).
+
+### 요청 (application/json)
+
+| 필드 | 타입 | 필수 | 설명 |
+|---|---|---|---|
+| `childName` | string | ✅ | 아이 이름. 내레이션에 그대로 쓰인다. 1~20자 |
+| `scenes` | array | ✅ | **정확히 4개.** 순서 고정: `school_arrival` → `class` → `lunch` → `school_departure` |
+| `scenes[].category` | string | ✅ | 위 4개 값 중 하나. 위치와 값이 일치해야 한다 |
+| `scenes[].partnerLine` | string | 조건부 | **대화 장면(등교·점심·하교) 필수.** 상대방이 아이에게 한 말 |
+| `scenes[].childSaid` | string \| null | ❌ | 아이가 고른 문장. 안 골랐으면 `null` |
+| `scenes[].poemText` | string | 조건부 | **수업(`class`) 필수.** 아이가 읽은 동시 전문 |
+| `scenes[].practicedWord` | string \| null | ❌ | 발음이 약해 연습한 낱말(`/pronunciation`의 `targetWord`) |
+
+```json
+{
+  "childName": "지우",
+  "scenes": [
+    { "category": "school_arrival", "partnerLine": "안녕! 오늘도 만나서 반가워", "childSaid": "안녕! 나도 만나서 반가워 !" },
+    { "category": "class", "poemText": "노란 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요.", "practicedWord": "살랑살랑" },
+    { "category": "lunch", "partnerLine": "오늘 반찬 맛있게 먹어요", "childSaid": null },
+    { "category": "school_departure", "partnerLine": "오늘도 수고했어, 내일 봐", "childSaid": "선생님, 안녕히 가세요!" }
+  ]
+}
+```
+
+> **`category`는 다른 곳의 값과 다르다.** `/pronunciation/sentences`는 `arrival`·`study`·`lunch`·`departure`를 쓰고,
+> 여기는 `school_arrival`·`class`·`lunch`·`school_departure`다. 섞어 쓰면 `400`이다.
+
+### 응답 (200)
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `title` | string | 동화 제목 |
+| `scenes` | array | 요청과 **같은 개수·순서·카테고리** |
+| `scenes[].subtitle` | string | 장면 소제목 |
+| `scenes[].opening` | string | 장면을 여는 전환구 |
+| `scenes[].quote` | string \| null | 아이가 한 말 인용. 없으면 `null` |
+| `scenes[].narration` | string | 동화 문장 2~3문장 |
+
+### 에러
+
+| 상태 | `field` | 상황 |
+|---|---|---|
+| 400 | `childName` | 없거나 비었거나 20자 초과 |
+| 400 | `scenes` | 배열이 아니거나 4개가 아님 |
+| 400 | `scenes[i].category` | 값이 없거나 그 자리에 올 값이 아님(순서 위반) |
+| 400 | `scenes[i].partnerLine` | 대화 장면인데 비어 있음 |
+| 400 | `scenes[i].poemText` | 수업 장면인데 비어 있음 |
+| 502 | — | LLM 호출 실패 |
+| 504 | — | **60초** 안에 안 끝남 |
+
+### ⚠️ 앱이 알아둘 것
+
+- **타임아웃이 60초다.** 다른 엔드포인트(15초)보다 훨씬 길다. 4장면을 한 번에 생성하기 때문이다.
+  **반드시 로딩 화면을 띄운다.** 실패해도 §0.4대로 `"괜찮아, 다시 해볼까?"` 로 폴백한다
+- **기록은 앱이 모은다.** 서버는 저장하지 않으므로, 하루를 진행하며 4장면을 앱이 쌓아뒀다가 한 번에 보낸다
+- **`childSaid`는 `null`이어도 된다.** 아이가 말을 고르지 않은 장면이 있을 수 있다
 
 ---
 

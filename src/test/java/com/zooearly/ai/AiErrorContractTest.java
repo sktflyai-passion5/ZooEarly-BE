@@ -50,6 +50,7 @@ class AiErrorContractTest {
     private static final String TTS = "/api/v1/ai/tts";
     private static final String FEEDBACK = "/api/v1/ai/feedback";
     private static final String PRONUNCIATION = "/api/v1/ai/pronunciation";
+    private static final String STORY = "/api/v1/ai/story";
 
     @Autowired
     private MockMvc mvc;
@@ -109,7 +110,7 @@ class AiErrorContractTest {
     @DisplayName("FastAPI의 422 STT_FAILED는 body를 그대로 통과시킨다 — §1.3")
     void passthroughKeepsFastApiBody() throws Exception {
         String body = "{\"success\":false,\"error\":{\"code\":\"STT_FAILED\",\"message\":\"엔진 오류\",\"field\":null}}";
-        given(inferenceClient.postMultipart(anyString(), any()))
+        given(inferenceClient.postMultipartStt(anyString(), any()))
                 .willThrow(new InferencePassthroughException(422, body));
 
         mvc.perform(multipart(STT).file(audio("a.m4a", 100)))
@@ -394,16 +395,135 @@ class AiErrorContractTest {
                 .andExpect(content().json(body));
     }
 
+    // ── story (동화 생성) — 명세 §7 ────────────────────────────
+
+    /** 명세 §7의 4장면 고정 순서를 만족하는 최소 요청 */
+    private static String storyBody() {
+        return "{\"childName\":\"지우\",\"scenes\":["
+             + "{\"category\":\"school_arrival\",\"partnerLine\":\"안녕! 오늘도 만나서 반가워\",\"childSaid\":\"안녕!\"},"
+             + "{\"category\":\"class\",\"poemText\":\"노란 꽃이 피었어요.\",\"practicedWord\":\"살랑살랑\"},"
+             + "{\"category\":\"lunch\",\"partnerLine\":\"맛있게 먹어요\",\"childSaid\":null},"
+             + "{\"category\":\"school_departure\",\"partnerLine\":\"내일 봐\",\"childSaid\":\"안녕히 계세요\"}"
+             + "]}";
+    }
+
+    @Test
+    @DisplayName("story: body를 가공하지 않고 그대로 릴레이한다")
+    void storyRelaysBodyUnchanged() throws Exception {
+        String response = "{\"success\":true,\"data\":{\"title\":\"오늘의 학교 동화\"}}";
+        given(inferenceClient.postJsonStory(anyString(), anyString())).willReturn(response);
+
+        String request = storyBody();
+        mvc.perform(post(STORY).contentType(MediaType.APPLICATION_JSON).content(request))
+                .andExpect(status().isOk())
+                .andExpect(content().json(response));
+
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        verify(inferenceClient).postJsonStory(anyString(), captor.capture());
+        assertThat(captor.getValue()).isEqualTo(request);
+    }
+
+    @Test
+    @DisplayName("story: 동화는 전용 타임아웃을 쓴다 — 일반 postJson으로 나가면 안 된다")
+    void storyUsesDedicatedClient() throws Exception {
+        given(inferenceClient.postJsonStory(anyString(), anyString())).willReturn("{\"success\":true}");
+
+        mvc.perform(post(STORY).contentType(MediaType.APPLICATION_JSON).content(storyBody()))
+                .andExpect(status().isOk());
+
+        verify(inferenceClient).postJsonStory(anyString(), anyString());
+        verify(inferenceClient, org.mockito.Mockito.never()).postJson(anyString(), anyString());
+    }
+
+    @Test
+    @DisplayName("story: childName 누락 → 400 + field=childName")
+    void storyRequiresChildName() throws Exception {
+        String body = storyBody().replace("\"childName\":\"지우\",", "");
+        mvc.perform(post(STORY).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.field").value("childName"));
+    }
+
+    @Test
+    @DisplayName("story: 장면이 4개가 아니면 400 — LLM까지 보내지 않는다")
+    void storyRequiresFourScenes() throws Exception {
+        String body = "{\"childName\":\"지우\",\"scenes\":[{\"category\":\"school_arrival\",\"partnerLine\":\"안녕\"}]}";
+        mvc.perform(post(STORY).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.field").value("scenes"));
+
+        org.mockito.Mockito.verifyNoInteractions(inferenceClient);
+    }
+
+    @Test
+    @DisplayName("story: 장면 순서가 어긋나면 400 — 하루를 시간순으로 잇는 것이라 순서가 의미다")
+    void storyRequiresFixedOrder() throws Exception {
+        String body = storyBody().replace("\"category\":\"school_arrival\"", "\"category\":\"lunch\"");
+        mvc.perform(post(STORY).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.field").value("scenes[0].category"));
+    }
+
+    @Test
+    @DisplayName("story: 대화 장면에 partnerLine이 비면 400 — 없으면 LLM이 지어내야 한다")
+    void storyRequiresPartnerLineInDialogueScenes() throws Exception {
+        String body = storyBody().replace("\"partnerLine\":\"맛있게 먹어요\"", "\"partnerLine\":\"  \"");
+        mvc.perform(post(STORY).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.field").value("scenes[2].partnerLine"));
+    }
+
+    @Test
+    @DisplayName("story: 수업 장면은 poemText가 필수 — 대화가 아니라 시 읽기다")
+    void storyRequiresPoemTextInClassScene() throws Exception {
+        String body = storyBody().replace("\"poemText\":\"노란 꽃이 피었어요.\",", "");
+        mvc.perform(post(STORY).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.field").value("scenes[1].poemText"));
+    }
+
+    @Test
+    @DisplayName("story: childName이 20자를 넘으면 field=childName — nickname으로 나오면 앱이 못 고친다")
+    void storyChildNameTooLongReportsOwnField() throws Exception {
+        String body = storyBody().replace("\"childName\":\"지우\"",
+                "\"childName\":\"가나다라마바사아자차카타파하가나다라마바사\"");
+        mvc.perform(post(STORY).contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.field").value("childName"));
+    }
+
+    @Test
+    @DisplayName("story: childSaid는 null이어도 된다 — 아이가 말을 안 고른 장면이 있을 수 있다")
+    void storyAllowsNullChildSaid() throws Exception {
+        given(inferenceClient.postJsonStory(anyString(), anyString())).willReturn("{\"success\":true}");
+
+        mvc.perform(post(STORY).contentType(MediaType.APPLICATION_JSON).content(storyBody()))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    @DisplayName("stt는 전용 타임아웃 클라이언트를 쓴다 — 기본(15초)으로 나가면 504가 난다")
+    void sttUsesDedicatedTimeoutClient() throws Exception {
+        given(inferenceClient.postMultipartStt(anyString(), any())).willReturn("{\"success\":true}");
+
+        mvc.perform(multipart(STT).file(audio("a.m4a", 100)))
+                .andExpect(status().isOk());
+
+        // 실측상 FastAPI STT가 35~70초 걸린다. 기본 클라이언트로 나가면 무조건 타임아웃이다
+        verify(inferenceClient).postMultipartStt(anyString(), any());
+        verify(inferenceClient, org.mockito.Mockito.never()).postMultipart(anyString(), any());
+    }
+
     @Test
     @DisplayName("FastAPI 경로는 설정에서 주입된다 — 앱 계약과 무관하게 바뀔 수 있다")
     void relayUsesConfiguredFastApiPath() throws Exception {
-        given(inferenceClient.postMultipart(anyString(), any())).willReturn("{\"success\":true}");
+        given(inferenceClient.postMultipartStt(anyString(), any())).willReturn("{\"success\":true}");
 
         mvc.perform(multipart(STT).file(audio("a.m4a", 100)))
                 .andExpect(status().isOk());
 
         // 앱은 /api/v1/ai/stt 로 부르지만, FastAPI 로는 설정된 경로로 나간다
-        verify(inferenceClient).postMultipart(eq(sttPath), any());
+        verify(inferenceClient).postMultipartStt(eq(sttPath), any());
     }
 
     // ── 정상 경로 ─────────────────────────────────────────────

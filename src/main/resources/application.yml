@@ -15,8 +15,36 @@ spring:
       max-file-size: 12MB
       max-request-size: 15MB
 
+logging:
+  level:
+    # 요청 한 건당 한 줄. 앱을 붙여놓고 통신이 실제로 오는지 눈으로 보려는 것이다.
+    # 본문은 안 찍는다 — 아이 음성·발화가 로그에 쌓이면 안 된다.
+    com.zooearly.access: INFO
+  pattern:
+    # 접근 로그는 스레드명·로거 풀네임이 길어 읽기 나쁘다. 시각과 메시지만 남긴다.
+    console: "%d{HH:mm:ss} %-5level %msg%n"
+
+# 프론트가 브라우저에서 돌 때 필요하다. 앱이 Azure Static Website로 배포되면서
+# 실서버에서도 켜야 하는 값이 됐다 (RN 네이티브였다면 CORS 자체가 없었다).
+#
+# 여기 기본값을 비워두는 이유: 허용 오리진은 배포 환경마다 다르고, 코드에 박아두면
+# 프론트 주소가 바뀔 때마다 재배포해야 한다. 환경변수로만 주입한다.
+# 여러 개면 쉼표로 구분한다.
+#
+# 실서버(Container Apps)에 설정된 값:
+#   CORS_ALLOWED_ORIGINS=https://stzooearlyfe.z12.web.core.windows.net
+# 로컬에서 Expo web으로 확인할 때:
+#   CORS_ALLOWED_ORIGINS=http://localhost:8081
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+
 inference:
   base-url: ${INFERENCE_BASE_URL:http://localhost:8000}  # FastAPI 주소. 배포 시 환경변수로 주입
+
+  # FastAPI가 X-API-Key 헤더로 인증한다 (FastAPI DEPLOY_azure.md §4).
+  # 비워두면 헤더 자체를 안 보낸다 — 로컬 개발·목 서버는 이 값 없이 그대로 동작한다.
+  # 절대 여기에 실제 키를 적지 않는다. 배포 시 환경변수로만 주입한다 — 명세 §키 관리.
+  api-key: ${INFERENCE_API_KEY:}
 
   # FastAPI 쪽 경로. 게이트웨이가 앱에 노출하는 /api/v1/ai/* 와 이름이 달라도 된다.
   # 하드코딩하지 않는 이유: FastAPI가 경로를 바꿔도 이 파일만 고치면 되게 하기 위함이다.
@@ -28,7 +56,25 @@ inference:
     feedback: ${INFERENCE_PATH_FEEDBACK:/internal/v1/feedback/expression}
     pronunciation: ${INFERENCE_PATH_PRONUNCIATION:/internal/v1/feedback/speaking}
     sentences: ${INFERENCE_PATH_SENTENCES:/internal/v1/feedback/sentences}
+    story: ${INFERENCE_PATH_STORY:/internal/v1/story/generate}
   timeout:
     connect-seconds: 3         # 명세 §0.4
-    read-seconds: 15           # stt / tts / feedback
+    read-seconds: 15           # tts / feedback / pronunciation
+
+    # STT만 따로 뺀 이유 — 실측 때문이다.
+    # 0.5초짜리 무음 wav 하나에 35~70초가 걸린다 (2026-08-24, 3회: 70/61/35초).
+    # 15초로 두면 앱에 무조건 504가 나가서 녹음 기능을 아예 못 써본다.
+    #
+    # 이 값은 "정상"이라서 90초가 아니라, 지금 FastAPI가 느려서 임시로 열어둔 것이다.
+    # 아이가 말하고 70초를 기다리는 화면은 실제로 못 쓴다 —
+    # FastAPI 쪽 STT 속도가 개선되면 반드시 다시 줄인다.
+    stt-read-seconds: ${INFERENCE_TIMEOUT_STT:90}
     chat-read-seconds: 30      # chat (STT+LLM+TTS 3단)
+
+    # 동화는 4개 장면을 한 번에 생성한다 — 장면마다 소제목·전환구·인용·내레이션이라
+    # LLM이 만들어내는 양이 다른 엔드포인트와 비교가 안 된다. 15초로는 부족하다.
+    #
+    # 60초는 실측이 아니라 여유값이다. FastAPI 명세에 소요 시간이 없어서 넉넉히 잡았다.
+    # 실제 지연이 확인되면 줄인다 — 타임아웃이 길면 정말 죽었을 때 아이를 오래 기다리게 한다.
+    # 앱은 이 화면에서 로딩을 보여주므로 기다림 자체는 허용되지만, 무한정은 아니다.
+    story-read-seconds: ${INFERENCE_TIMEOUT_STORY:60}

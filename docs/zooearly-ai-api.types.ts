@@ -164,6 +164,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ai/story": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 동화 생성
+         * @description 하루치 플레이 기록 4장면을 받아 LLM이 동화로 엮어 돌려준다.
+         *
+         *     다른 엔드포인트와 달리 "방금 한 행동"이 아니라 **"오늘 한 일 전부"** 를 한 번에 보낸다.
+         *     그 기록을 모아두는 것은 **앱의 몫**이다 — 서버는 아무것도 저장하지 않는다(무상태).
+         *
+         *     **타임아웃이 60초다.** 4장면을 한 번에 생성하기 때문이며 다른 엔드포인트(15초)보다
+         *     훨씬 길다. 앱은 반드시 로딩 화면을 띄운다.
+         *
+         *     `category` 값이 `/ai/pronunciation/sentences`와 다르다는 점에 주의한다 —
+         *     저쪽은 arrival/study/lunch/departure, 여기는 school_arrival/class/lunch/school_departure다.
+         */
+        post: operations["story"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -813,6 +842,124 @@ export interface operations {
                     };
                 };
             };
+            502: components["responses"]["AiServerError"];
+            504: components["responses"]["AiTimeout"];
+        };
+    };
+    story: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                /**
+                 * @example {
+                 *       "childName": "지우",
+                 *       "scenes": [
+                 *         {
+                 *           "category": "school_arrival",
+                 *           "partnerLine": "안녕! 오늘도 만나서 반가워",
+                 *           "childSaid": "안녕! 나도 만나서 반가워 !"
+                 *         },
+                 *         {
+                 *           "category": "class",
+                 *           "poemText": "노란 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요.",
+                 *           "practicedWord": "살랑살랑"
+                 *         },
+                 *         {
+                 *           "category": "lunch",
+                 *           "partnerLine": "오늘 반찬 맛있게 먹어요",
+                 *           "childSaid": null
+                 *         },
+                 *         {
+                 *           "category": "school_departure",
+                 *           "partnerLine": "오늘도 수고했어, 내일 봐",
+                 *           "childSaid": "선생님, 안녕히 가세요!"
+                 *         }
+                 *       ]
+                 *     }
+                 */
+                "application/json": {
+                    /** @description 아이 이름. 내레이션에 그대로 쓰인다 */
+                    childName: string;
+                    /**
+                     * @description 정확히 4개. 순서 고정 — school_arrival → class → lunch → school_departure.
+                     *     위치와 category 값이 일치해야 한다. 어긋나면 400이다.
+                     */
+                    scenes: {
+                        /** @enum {string} */
+                        category: "school_arrival" | "class" | "lunch" | "school_departure";
+                        /**
+                         * @description 상대방이 아이에게 한 말. 대화 장면(school_arrival/lunch/school_departure)에서는 필수다.
+                         *     없으면 LLM이 없는 대사를 지어내야 하므로 400으로 끊는다.
+                         */
+                        partnerLine?: string;
+                        /** @description 아이가 고른 문장. 안 골랐으면 null */
+                        childSaid?: string | null;
+                        /** @description 아이가 읽은 동시 전문. class 장면에서는 필수다 */
+                        poemText?: string;
+                        /** @description 발음이 약해 연습한 낱말(/ai/pronunciation의 targetWord) */
+                        practicedWord?: string | null;
+                    }[];
+                };
+            };
+        };
+        responses: {
+            /** @description 생성 성공 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "success": true,
+                     *       "data": {
+                     *         "title": "오늘의 학교 동화",
+                     *         "scenes": [
+                     *           {
+                     *             "category": "school_arrival",
+                     *             "subtitle": "첫 만남의 아침",
+                     *             "opening": "교문 앞이었어요",
+                     *             "quote": "안녕! 나도 반가워",
+                     *             "narration": "지우가 교문 앞에 서 있었어요. 친구가 밝게 인사했지요."
+                     *           },
+                     *           {
+                     *             "category": "class",
+                     *             "subtitle": "시를 읽은 시간",
+                     *             "opening": "교실 문을 열자",
+                     *             "quote": null,
+                     *             "narration": "지우가 조용히 교실에 들어갔어요. 노란 꽃 이야기를 읽었답니다."
+                     *           }
+                     *         ]
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["SuccessEnvelope"] & {
+                        data?: {
+                            /** @description 동화 제목 */
+                            title: string;
+                            /** @description 요청과 같은 개수·순서·카테고리 */
+                            scenes: {
+                                /** @enum {string} */
+                                category?: "school_arrival" | "class" | "lunch" | "school_departure";
+                                /** @description 장면 소제목 */
+                                subtitle?: string;
+                                /** @description 장면을 여는 전환구 */
+                                opening?: string;
+                                /** @description 아이가 한 말 인용. 없으면 null */
+                                quote?: string | null;
+                                /** @description 동화 문장 2~3문장 */
+                                narration?: string;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
             502: components["responses"]["AiServerError"];
             504: components["responses"]["AiTimeout"];
         };

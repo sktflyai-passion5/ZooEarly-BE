@@ -30,6 +30,16 @@ public class AiRelayService {
     private static final long MAX_AUDIO_BYTES = 10L * 1024 * 1024;
     private static final int MAX_NICKNAME_LENGTH = 20;   // 명세 §2 / §5
 
+    /**
+     * 동화 장면 순서 — 명세 §7. 하루를 시간순으로 잇는 것이라 순서 자체가 의미다.
+     * FastAPI도 이 순서가 아니면 422로 거절하므로, 게이트웨이가 먼저 400으로 끊는다.
+     */
+    private static final java.util.List<String> STORY_CATEGORIES =
+            java.util.List.of("school_arrival", "class", "lunch", "school_departure");
+    /** 대화 장면 — 상대방 대사가 있어야 이야기가 성립한다. class(시 읽기)만 예외다 */
+    private static final Set<String> STORY_DIALOGUE_CATEGORIES =
+            Set.of("school_arrival", "lunch", "school_departure");
+
     private final InferenceClient inferenceClient;
     private final ObjectMapper objectMapper;
 
@@ -44,6 +54,7 @@ public class AiRelayService {
     private final String feedbackPath;
     private final String pronunciationPath;
     private final String sentencesPath;
+    private final String storyPath;
 
     public AiRelayService(InferenceClient inferenceClient, ObjectMapper objectMapper,
                           @Value("${inference.path.chat}") String chatPath,
@@ -51,7 +62,8 @@ public class AiRelayService {
                           @Value("${inference.path.tts}") String ttsPath,
                           @Value("${inference.path.feedback}") String feedbackPath,
                           @Value("${inference.path.pronunciation}") String pronunciationPath,
-                          @Value("${inference.path.sentences}") String sentencesPath) {
+                          @Value("${inference.path.sentences}") String sentencesPath,
+                          @Value("${inference.path.story}") String storyPath) {
         this.inferenceClient = inferenceClient;
         this.objectMapper = objectMapper;
         this.chatPath = chatPath;
@@ -60,6 +72,7 @@ public class AiRelayService {
         this.feedbackPath = feedbackPath;
         this.pronunciationPath = pronunciationPath;
         this.sentencesPath = sentencesPath;
+        this.storyPath = storyPath;
     }
 
     // ── chat ──────────────────────────────────────────────
@@ -95,7 +108,7 @@ public class AiRelayService {
         if (language != null) {
             parts.add("language", language);
         }
-        return inferenceClient.postMultipart(sttPath, parts);
+        return inferenceClient.postMultipartStt(sttPath, parts);
     }
 
     // ── tts ───────────────────────────────────────────────
@@ -192,7 +205,69 @@ public class AiRelayService {
         return inferenceClient.get(sentencesPath);
     }
 
+    // ── story ─────────────────────────────────────────────
+
+    /**
+     * 동화 생성 — 명세 §7.
+     *
+     * 하루치 플레이 기록(등교·수업·점심·하교 4장면)을 받아 LLM이 동화로 엮는다.
+     * 다른 엔드포인트와 달리 "방금 한 행동"이 아니라 "오늘 한 일 전부"를 한 번에 보낸다 —
+     * 그 기록을 모아두는 것은 앱의 몫이다. 게이트웨이는 저장하지 않는다(무상태).
+     *
+     * 여기서 구조를 검증하는 이유: 장면이 4개가 아니거나 순서가 어긋나면 FastAPI가
+     * 어차피 422로 돌려보낸다. 그 왕복은 LLM 호출까지 갈 것도 없는 낭비라,
+     * "잘못된 요청은 FastAPI까지 보내지 않는다"(§0.1)는 역할대로 먼저 끊는다.
+     *
+     * body는 파싱만 하고 가공하지 않는다. 앱이 보낸 그대로 FastAPI로 넘어간다 — §0.1.
+     */
+    public String story(String rawBody) {
+        JsonNode body = parseJson(rawBody);
+
+        JsonNode childName = body.get("childName");
+        if (childName == null || !childName.isTextual()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "childName");
+        }
+        // 내레이션에 그대로 실리는 이름이라 닉네임과 같은 규칙을 쓴다
+        validateChildName(childName.asText(), "childName");
+
+        JsonNode scenes = body.get("scenes");
+        if (scenes == null || !scenes.isArray() || scenes.size() != STORY_CATEGORIES.size()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "scenes");
+        }
+
+        for (int i = 0; i < scenes.size(); i++) {
+            JsonNode scene = scenes.get(i);
+            String field = "scenes[" + i + "]";
+            if (scene == null || !scene.isObject()) {
+                throw new BusinessException(ErrorCode.INVALID_PARAMETER, field);
+            }
+
+            JsonNode category = scene.get("category");
+            String expected = STORY_CATEGORIES.get(i);
+            if (category == null || !category.isTextual() || !expected.equals(category.asText())) {
+                throw new BusinessException(ErrorCode.INVALID_PARAMETER, field + ".category");
+            }
+
+            if (STORY_DIALOGUE_CATEGORIES.contains(expected)) {
+                // 상대방 대사가 없으면 LLM이 지어내야 한다. 실제 기록만으로 쓰는 것이 이 기능의 전제다
+                requireNonBlank(scene.get("partnerLine"), field + ".partnerLine");
+            } else {
+                // class — 아이가 읽은 동시 전문
+                requireNonBlank(scene.get("poemText"), field + ".poemText");
+            }
+        }
+
+        return inferenceClient.postJsonStory(storyPath, rawBody);
+    }
+
     // ── 검증 헬퍼 ─────────────────────────────────────────
+
+    /** 값이 문자열이고 비어 있지 않아야 한다. null·빈 문자열·공백만 있는 경우를 모두 막는다 */
+    private void requireNonBlank(JsonNode node, String field) {
+        if (node == null || !node.isTextual() || node.asText().isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, field);
+        }
+    }
 
     /** §1.4 업로드 규격: m4a/wav/webm, 최대 10MB */
     private void validateAudio(MultipartFile audio) {
@@ -233,8 +308,18 @@ public class AiRelayService {
      * 공백만 있는 값은 호칭으로 쓸 수 없으므로 누락과 같게 본다.
      */
     private void validateNickname(String nickname) {
-        if (nickname == null || nickname.isBlank() || nickname.length() > MAX_NICKNAME_LENGTH) {
-            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "nickname");
+        validateChildName(nickname, "nickname");
+    }
+
+    /**
+     * 아이 이름 규칙 — 명세 §2 / §5 / §7.
+     *
+     * 필드명을 받는 이유: 같은 규칙을 nickname(대화·피드백)과 childName(동화)이 함께 쓰는데,
+     * 에러의 field를 고정하면 앱이 어느 입력을 고쳐야 할지 알 수 없다.
+     */
+    private void validateChildName(String value, String field) {
+        if (value == null || value.isBlank() || value.length() > MAX_NICKNAME_LENGTH) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, field);
         }
     }
 

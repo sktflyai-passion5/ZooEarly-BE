@@ -18,7 +18,7 @@
 
 ---
 
-## 1. 엔드포인트 6개
+## 1. 엔드포인트 7개
 
 **경로는 FastAPI 쪽 이름을 그대로 쓴다.** 게이트웨이가 설정으로 맞춘다 — 바꿔달라고 하지 않는다.
 
@@ -29,6 +29,7 @@
 | `POST /api/v1/ai/feedback` | `POST /internal/v1/feedback/expression` ⚠️ | application/json |
 | `POST /api/v1/ai/pronunciation` | `POST /internal/v1/feedback/speaking` | multipart/form-data |
 | `GET /api/v1/ai/pronunciation/sentences` | `GET /internal/v1/feedback/sentences` | 없음 (GET) |
+| `POST /api/v1/ai/story` | `POST /internal/v1/story/generate` | application/json |
 | `POST /api/v1/ai/chat` | `POST /internal/v1/chat` (미사용) | multipart/form-data |
 
 ⚠️ `feedback/expression`은 **아직 FastAPI에 없는 경로**다. 4번 항목 참고.
@@ -43,10 +44,16 @@ inference:
     feedback: /internal/v1/feedback/expression
     pronunciation: /internal/v1/feedback/speaking
     sentences: /internal/v1/feedback/sentences
+    story: /internal/v1/story/generate
 ```
 
 Base URL은 환경변수 `INFERENCE_BASE_URL`로 주입한다 (기본 `http://localhost:8000`).
-인증 헤더는 없다 — 프로토타입 단계라 명세에 없다.
+
+**인증: `X-API-Key` 헤더를 보낸다.** FastAPI 쪽 배포 가이드(`DEPLOY_azure.md` §4)가
+`API_KEY` 환경변수로 이 헤더를 검사하도록 정해뒀다. 게이트웨이는 `INFERENCE_API_KEY`
+환경변수 값을 그대로 `X-API-Key`에 실어 보낸다. 로컬 개발처럼 이 값이 비어 있으면
+헤더 자체를 안 보낸다 — FastAPI도 `API_KEY`가 비어 있으면 인증을 안 하므로(로컬 전용)
+목 서버·로컬 FastAPI는 그대로 동작한다.
 
 ---
 
@@ -65,10 +72,47 @@ FastAPI 명세(`zooearly-fastapi-spec.md`)와 대조한 결과다.
 | ~~6~~ | ~~**표현 교정 API**~~ | 없음 | **당분간 만들지 않는다** | 화면을 구현하지 않기로 했다 |
 | 7 | **발음 채점 응답 봉투** | (2번과 동일) | `{success, data}` | `/feedback/speaking`에도 2번 규칙이 그대로 적용된다 |
 | 8 | 문장 목록 응답 봉투 | 배열을 봉투 없이 그대로 | `{success, data: [...]}` | `GET /feedback/sentences`도 마찬가지. `data`가 배열이면 된다 |
+| 9 | **동화 요청 필드명** | `child_name`, `partner_line`, `child_said`, `poem_text`, `practiced_word` (snake_case) | **camelCase로 받기** — `childName`, `partnerLine`, `childSaid`, `poemText`, `practicedWord` | 게이트웨이는 앱 body를 그대로 통과시킨다. `sentenceId`와 같은 규칙이다 (§3 참고) |
+| 10 | 동화 응답 봉투 | `{title, scenes}` | `{success, data: {title, scenes}}` | 2번 규칙이 그대로 적용된다 |
 
-**요청 쪽은 이미 맞다 — 고칠 필요 없다.** `/feedback/speaking`의 `sentence_id` 필드,
-`GET /feedback/sentences`의 `sentence_id`/`category`/`text` 필드는 게이트웨이가 그대로
-쓸 수 있는 모양으로 나온다(2026-08-24 개정). 이 문서 §3·§4는 그 형태를 그대로 반영한다.
+> ### ⚠️ 2026-08-24 실측 — 위 표는 명세를 보고 쓴 것이고, **실제로 붙여보니 요청 쪽도 안 맞는다**
+>
+> 배포된 FastAPI(`zooearly-ai...azurecontainerapps.io`)에 게이트웨이를 연결해 확인한 결과다.
+> 이전 판에 "요청 쪽은 이미 맞다 — 고칠 필요 없다"고 적었는데 **틀렸다.** 명세 문장만 보고
+> 판단했고 실제 호출로 확인하지 않았다.
+>
+> | 엔드포인트 | 게이트웨이가 보내는 것 | FastAPI가 요구하는 것 | 결과 |
+> |---|---|---|---|
+> | `/speech/transcribe` | `audio`, `language` | `audio_file`, `language_code` | **422** |
+> | `/speech/synthesize` | `language` | `language_code` | **422** |
+> | `/feedback/speaking` | `audio`, `sentenceId` | `audio_file`, `sentence_id` | **422** |
+> | `/feedback/expression` | — | 경로 자체가 없음 | **502** |
+> | `/feedback/sentences` | — (GET) | — | **200** ✅ |
+> | `/story/generate` | `childName`, `partnerLine`, `poemText` … | `child_name`, `partner_line`, `poem_text` … | **422** |
+>
+> `/story/generate`는 **snake_case로 보내면 200이 나오고 동화가 실제로 생성된다.**
+> 즉 로직은 멀쩡하고 필드명만 안 맞는다.
+>
+> 유일하게 통하는 건 문장 목록뿐이고, 그마저 응답이 봉투 없는 배열 + `snake_case`라
+> 앱이 못 읽는다.
+>
+> **누가 고칠지는 아래 "역할 나누기"를 참고한다.**
+
+### 역할 나누기 — 요청은 게이트웨이가, 응답은 FastAPI가
+
+기준은 하나다. **게이트웨이는 요청을 바꿀 수 있지만 응답은 못 바꾼다.**
+
+| | 누가 고치나 | 왜 |
+|---|---|---|
+| **요청** 필드명·값 | 게이트웨이 가능 ✅ | 어차피 검증하느라 들여다본다. 이름만 바꿔 보내면 된다 |
+| **응답** 봉투·필드명·형식 | **FastAPI만 가능** ❌ | 게이트웨이가 body를 파싱하지 않는다(§0.1). FastAPI 응답이 곧 앱이 받는 JSON이다 |
+
+**그래서 FastAPI는 응답을 반드시 고쳐야 한다.** 요청 쪽을 게이트웨이가 다 맞춰줘도
+앱은 여전히 응답을 못 읽어서 화면이 안 뜬다.
+
+**요청 쪽은 어느 쪽이 해도 된다.** 다만 FastAPI가 응답을 고치러 파일을 여는 김에
+요청 필드명도 같이 받아주는 편이 총 작업량이 적다. 부담되면 게이트웨이가 변환한다 —
+알려주면 그렇게 바꾼다.
 
 **왜 게이트웨이가 못 고치나** — CLAUDE.md의 핵심 제약이다.
 
@@ -331,6 +375,53 @@ body 없음, 인증 헤더 없음. 게이트웨이는 이 요청을 그대로 �
 이걸로 수업시간의 "같이 읽어볼까요?"가 등교/급식/하교와 **같은 `/pronunciation` 경로를
 그대로 쓸 수 있다** — 별도 낭독 전용 엔드포인트(`feedback/reading`)가 필요 없어졌다.
 
+### POST /internal/v1/story/generate  — 동화 생성
+
+**실제로 도착하는 body** (게이트웨이가 앱 JSON을 그대로 통과시킨 것을 목 서버에서 캡처):
+
+```json
+{
+  "childName": "지우",
+  "scenes": [
+    { "category": "school_arrival", "partnerLine": "안녕! 오늘도 만나서 반가워", "childSaid": "안녕! 나도 만나서 반가워 !" },
+    { "category": "class", "poemText": "노란 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요.", "practicedWord": "살랑살랑" },
+    { "category": "lunch", "partnerLine": "오늘 반찬 맛있게 먹어요", "childSaid": null },
+    { "category": "school_departure", "partnerLine": "오늘도 수고했어, 내일 봐", "childSaid": "선생님, 안녕히 가세요!" }
+  ]
+}
+```
+
+> ### ⚠️ 이 형태는 현재 FastAPI가 못 받는다 (2026-08-24 실측)
+>
+> 위 body를 그대로 보내면 `422 child_name Field required`가 난다.
+> 같은 body를 snake_case로 바꾸면 `200`이고 동화가 정상 생성된다.
+> **표 9번(camelCase 수용)에 응해주거나, 아니면 게이트웨이가 변환해야 한다.**
+
+**★ 필드명이 camelCase다.** FastAPI 명세(`zooearly-fastapi-spec.md` §7)의 예시는
+`child_name`·`partner_line`·`child_said`·`poem_text`·`practiced_word`인데,
+**실제로는 위처럼 도착한다.** `sentenceId`와 같은 상황이다 — 게이트웨이가 앱 body를
+가공 없이 통과시키기 때문이고, 앱 계약이 camelCase다.
+
+⚠️ 다만 **`sentenceId`는 실측에서 422로 실패한 케이스다**(§1-1 표). 선례로 들기에 적절하지 않다 —
+`/story`도 같은 이유로 422다. 요청 필드명 정렬은 아직 어느 쪽도 끝나지 않았다.
+
+게이트웨이가 **먼저 걸러서 400으로 끊는 것들** (여기까지 오지 않는다):
+
+| 걸러지는 조건 | 앱이 받는 field |
+|---|---|
+| `childName` 없음·빈 값·20자 초과 | `childName` |
+| `scenes`가 배열이 아니거나 4개가 아님 | `scenes` |
+| i번째 `category`가 고정 순서와 다름 | `scenes[i].category` |
+| 대화 장면인데 `partnerLine`이 빔 | `scenes[i].partnerLine` |
+| `class`인데 `poemText`가 빔 | `scenes[i].poemText` |
+
+그래서 FastAPI의 422 세 가지(개수·순서·빈 `partner_line`)는 **정상 경로에서는 거의 안 쓰인다.**
+그래도 방어용으로 남겨두는 편이 좋다 — 게이트웨이를 거치지 않고 직접 호출될 수 있다.
+
+> **타임아웃 60초.** 다른 엔드포인트는 15초인데 동화만 길다. 4장면을 한 번에 생성해서다.
+> 이 시간을 넘기면 게이트웨이가 `504 AI_TIMEOUT`을 만들어 앱에 준다.
+> **실측이 아니라 여유값이라, 실제 소요 시간을 알려주면 줄이겠다.**
+
 ---
 
 ## 4. FastAPI 시그니처 — 그대로 쓰면 된다
@@ -459,9 +550,13 @@ FastAPI 기본 에러 형식인 `{"detail": "..."}`로 내면 앱이 못 읽는�
 
 | 엔드포인트 | 제한 |
 |---|---|
+| `/ai/story` | **60초** (4장면을 한 번에 생성해 가장 오래 걸린다) |
 | `/ai/chat` | **30초** (STT + LLM + TTS 3단이라 길게 잡음) |
 | `/ai/stt` `/ai/tts` `/ai/feedback` `/ai/pronunciation` `/ai/pronunciation/sentences` | **15초** |
 | 연결(TCP) | 3초 |
+
+`/ai/story`의 60초는 **실측이 아니라 여유값이다.** 명세에 소요 시간이 없어 넉넉히 잡았다 —
+실제로 얼마나 걸리는지 알려주면 줄인다. 타임아웃이 길면 정말 죽었을 때 아이를 오래 기다리게 한다.
 
 OpenAI 호출이 느릴 수 있으니 FastAPI 쪽에서도 자체 타임아웃을 이보다
 짧게 걸어두면 좋다. 그래야 게이트웨이가 끊기 전에 의미 있는 에러를 만들 수 있다.
