@@ -98,6 +98,7 @@ Android 9+와 iOS는 `https`가 아닌 통신을 기본 차단한다. 개발 빌
 | `/ai/stt` | `text: "많이 주세여"`, `confidence: 0.92` |
 | `/ai/tts` | 무음 mp3 1초 |
 | `/ai/feedback` | `matched: true` 피드백. `nativeLanguage`가 `KOREAN`이면 `translation: null` |
+| `/internal/v1/story/generate` | 동화. **요청한 4장면을 순서 그대로** 되돌려주므로 앱이 순서·카테고리 배선을 바로 확인할 수 있다. `childSaid`가 `null`인 장면은 `quote`도 `null` |
 
 **mp3는 진짜 무음 파일이다.** 앱의 재생 배선을 확인할 수 있다 — 소리는 안 나지만
 플레이어가 파일을 받아 재생 완료까지 가는지 볼 수 있다.
