@@ -46,7 +46,12 @@ inference:
 ```
 
 Base URL은 환경변수 `INFERENCE_BASE_URL`로 주입한다 (기본 `http://localhost:8000`).
-인증 헤더는 없다 — 프로토타입 단계라 명세에 없다.
+
+**인증: `X-API-Key` 헤더를 보낸다.** FastAPI 쪽 배포 가이드(`DEPLOY_azure.md` §4)가
+`API_KEY` 환경변수로 이 헤더를 검사하도록 정해뒀다. 게이트웨이는 `INFERENCE_API_KEY`
+환경변수 값을 그대로 `X-API-Key`에 실어 보낸다. 로컬 개발처럼 이 값이 비어 있으면
+헤더 자체를 안 보낸다 — FastAPI도 `API_KEY`가 비어 있으면 인증을 안 하므로(로컬 전용)
+목 서버·로컬 FastAPI는 그대로 동작한다.
 
 ---
 

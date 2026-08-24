@@ -18,6 +18,11 @@ spring:
 inference:
   base-url: ${INFERENCE_BASE_URL:http://localhost:8000}  # FastAPI 주소. 배포 시 환경변수로 주입
 
+  # FastAPI가 X-API-Key 헤더로 인증한다 (FastAPI DEPLOY_azure.md §4).
+  # 비워두면 헤더 자체를 안 보낸다 — 로컬 개발·목 서버는 이 값 없이 그대로 동작한다.
+  # 절대 여기에 실제 키를 적지 않는다. 배포 시 환경변수로만 주입한다 — 명세 §키 관리.
+  api-key: ${INFERENCE_API_KEY:}
+
   # FastAPI 쪽 경로. 게이트웨이가 앱에 노출하는 /api/v1/ai/* 와 이름이 달라도 된다.
   # 하드코딩하지 않는 이유: FastAPI가 경로를 바꿔도 이 파일만 고치면 되게 하기 위함이다.
   # 앱 계약(/api/v1/ai/*)은 이것과 무관하게 그대로다.
