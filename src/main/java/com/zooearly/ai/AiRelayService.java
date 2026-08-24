@@ -43,13 +43,15 @@ public class AiRelayService {
     private final String ttsPath;
     private final String feedbackPath;
     private final String pronunciationPath;
+    private final String sentencesPath;
 
     public AiRelayService(InferenceClient inferenceClient, ObjectMapper objectMapper,
                           @Value("${inference.path.chat}") String chatPath,
                           @Value("${inference.path.stt}") String sttPath,
                           @Value("${inference.path.tts}") String ttsPath,
                           @Value("${inference.path.feedback}") String feedbackPath,
-                          @Value("${inference.path.pronunciation}") String pronunciationPath) {
+                          @Value("${inference.path.pronunciation}") String pronunciationPath,
+                          @Value("${inference.path.sentences}") String sentencesPath) {
         this.inferenceClient = inferenceClient;
         this.objectMapper = objectMapper;
         this.chatPath = chatPath;
@@ -57,6 +59,7 @@ public class AiRelayService {
         this.ttsPath = ttsPath;
         this.feedbackPath = feedbackPath;
         this.pronunciationPath = pronunciationPath;
+        this.sentencesPath = sentencesPath;
     }
 
     // ── chat ──────────────────────────────────────────────
@@ -160,17 +163,33 @@ public class AiRelayService {
      * /feedback(표현 교정)과 다르다. 저쪽은 "어떤 단어를 골랐나"를 텍스트로 보고,
      * 이쪽은 "어떻게 소리 냈나"를 오디오로 본다. 그래서 STT를 거치지 않고
      * 녹음을 그대로 보낸다 — 텍스트로는 발음을 알 수 없기 때문이다.
+     *
+     * targetSentence(자유 텍스트)가 아니라 sentenceId(고정 9개 중 하나)를 받는다 —
+     * FastAPI가 채점 기준 문장을 자기 목록에서 직접 찾아야 해서 자유 텍스트를 받지 않는다
+     * (2026-08-24 FastAPI 명세 변경). 어떤 id가 유효한지는 여기서 검증하지 않는다 —
+     * 그 목록(9개 문장)은 sentences()가 FastAPI에서 그대로 받아오는 것이라 게이트웨이가
+     * 따로 알 필요가 없고, 잘못된 id는 FastAPI가 422로 걸러준다.
      */
-    public String pronunciation(MultipartFile audio, String targetSentence) {
+    public String pronunciation(MultipartFile audio, String sentenceId) {
         validateAudio(audio);
-        if (targetSentence == null || targetSentence.isBlank()) {
-            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "targetSentence");
+        if (sentenceId == null || sentenceId.isBlank()) {
+            throw new BusinessException(ErrorCode.INVALID_PARAMETER, "sentenceId");
         }
 
         MultiValueMap<String, Object> parts = new LinkedMultiValueMap<>();
         parts.add("audio", audio.getResource());
-        parts.add("targetSentence", targetSentence);
+        parts.add("sentenceId", sentenceId);
         return inferenceClient.postMultipart(pronunciationPath, parts);
+    }
+
+    /**
+     * 발음 연습 문장 9개(등교·급식·하교 × 3) 조회 — 명세 §6-1.
+     *
+     * 입력이 없어 검증할 것도 없다. FastAPI 응답을 그대로 통과시킨다 — §0.1.
+     * "표현 고르기" 화면의 선택지 3개가 이 목록에서 온다(시나리오별로 3개씩 필터링).
+     */
+    public String sentences() {
+        return inferenceClient.get(sentencesPath);
     }
 
     // ── 검증 헬퍼 ─────────────────────────────────────────

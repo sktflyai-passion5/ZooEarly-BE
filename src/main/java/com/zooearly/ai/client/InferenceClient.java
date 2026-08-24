@@ -45,6 +45,15 @@ public class InferenceClient {
         return exchange(defaultClient, path, MediaType.APPLICATION_JSON, rawJsonBody);
     }
 
+    /** pronunciation/sentences — 문장 목록 조회. body 없음 */
+    public String get(String path) {
+        try {
+            return defaultClient.get().uri(path).retrieve().body(String.class);
+        } catch (RestClientResponseException e) {
+            throw translate(e);
+        }
+    }
+
     /** stt — multipart 전달 */
     public String postMultipart(String path, MultiValueMap<String, Object> parts) {
         return exchange(defaultClient, path, MediaType.MULTIPART_FORM_DATA, parts);
@@ -64,15 +73,21 @@ public class InferenceClient {
                     .retrieve()
                     .body(String.class);
         } catch (RestClientResponseException e) {
-            // 422/429만 FastAPI가 만든 body를 그대로 통과시킨다.
-            // 나머지 4xx/5xx는 손대지 않고 그대로 올려보내면
-            // GlobalExceptionHandler가 AI_SERVER_ERROR(502)로 감싼다 — §1.3
-            int status = e.getStatusCode().value();
-            if (status == 422 || status == 429) {
-                throw new InferencePassthroughException(status, e.getResponseBodyAsString());
-            }
-            throw e;
+            throw translate(e);
         }
+    }
+
+    /**
+     * 422/429만 FastAPI가 만든 body를 그대로 통과시킨다.
+     * 나머지 4xx/5xx는 손대지 않고 그대로 올려보내면
+     * GlobalExceptionHandler가 AI_SERVER_ERROR(502)로 감싼다 — §1.3
+     */
+    private RuntimeException translate(RestClientResponseException e) {
+        int status = e.getStatusCode().value();
+        if (status == 422 || status == 429) {
+            return new InferencePassthroughException(status, e.getResponseBodyAsString());
+        }
+        return e;
     }
 
 }

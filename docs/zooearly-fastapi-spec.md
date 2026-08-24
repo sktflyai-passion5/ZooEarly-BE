@@ -6,7 +6,7 @@
 | 항목 | 값 |
 |---|---|
 | Base Path | `/internal/v1` |
-| 엔드포인트 | **5개** — STT / TTS / 번역 / 말하기 피드백 / 낭독 피드백 |
+| 엔드포인트 | **6개** — STT / TTS / 번역 / 말하기 피드백 / 추천 문장 목록 / 낭독 피드백 |
 | 담당 | 주아연 (STT·TTS) |
 
 ## 엔드포인트 요약
@@ -17,7 +17,8 @@
 | 2 | POST | `/internal/v1/speech/synthesize` | 음성 합성 (TTS) | JSON | **바이너리 (audio/mpeg)** |
 | 3 | POST | `/internal/v1/text/translate` | 번역 | JSON | JSON |
 | 4 | POST | `/internal/v1/feedback/speaking` | 말하기 피드백 | **multipart** | JSON |
-| 5 | POST | `/internal/v1/feedback/reading` | 낭독 피드백 | (미작성) | (미작성) |
+| 5 | GET | `/internal/v1/feedback/sentences` | 발음 연습 추천 문장 10개 | - | JSON |
+| 6 | POST | `/internal/v1/feedback/reading` | 낭독 피드백 | (미작성) | (미작성) |
 
 ---
 
@@ -223,7 +224,7 @@ Content-Type: multipart/form-data
 | 필드 | 타입 | 필수 | 설명 |
 |---|---|---|---|
 | `audio_file` | file | ✅ | 녹음 파일. `SCORING_MAX_UPLOAD_MB`(기본 20MB) 이하 |
-| `text` | string | ✅ | 아이가 읽은 원문 문장 |
+| `sentence_id` | string (enum) | ✅ | `GET /internal/v1/feedback/sentences`에서 받은 10개 값 중 하나. `arrival_1`, `arrival_2`, `arrival_3`, `study_1`, `lunch_1`, `lunch_2`, `lunch_3`, `departure_1`, `departure_2`, `departure_3` |
 
 ## 3️⃣ Response
 
@@ -231,22 +232,21 @@ Content-Type: multipart/form-data
 
 ```json
 {
-  "success": true,
-  "data": {
-    "sentence": "안녕! 나도 만나서 반가워",
-    "target_word": "만나서",
-    "target_index": 2,
-    "target_z": -1.82,
-    "quiz_sentence": "안녕! 나도 ＿＿＿ 반가워",
-    "words": [
-      { "word": "안녕!", "z": 0.31,  "warn": false, "worst_phone": null },
-      { "word": "나도",  "z": -0.42, "warn": false, "worst_phone": null },
-      { "word": "만나서", "z": -1.82, "warn": true,  "worst_phone": "ㄴ" },
-      { "word": "반가워", "z": -0.55, "warn": false, "worst_phone": null }
-    ]
-  }
+  "sentence_id": "arrival_2",
+  "sentence": "안녕! 우리 친하게 지내자",
+  "target_word": "지내자",
+  "target_index": 3,
+  "target_z": -1.82,
+  "words": [
+    { "word": "안녕!",  "z": 0.31,  "warn": false, "worst_phone": null },
+    { "word": "우리",   "z": -0.42, "warn": false, "worst_phone": null },
+    { "word": "친하게", "z": -1.12, "warn": false, "worst_phone": null },
+    { "word": "지내자", "z": -1.82, "warn": true,  "worst_phone": "ㄴ" }
+  ]
 }
 ```
+
+발음이 전부 기준(z ≥ -1.5) 이상으로 좋으면, 위 예시와 달리 `target_word`가 `null`로 옵니다. **이 경우 퀴즈 화면으로 넘어가지 말고 칭찬 화면으로 바로 가야 합니다.**
 
 ### ❌ 실패
 
@@ -258,9 +258,68 @@ Content-Type: multipart/form-data
 }
 ```
 
+## 4️⃣ API 수정 로그
+
+- 2026-08-24 — `text`(원문 직접 전달) 폐지, `sentence_id`로 변경. 9개 고정 문장 중 하나를 선택해 채점하는 방식으로 바뀜. 응답에서 `success`/`data` 래퍼와 `quiz_sentence` 필드 제거, `sentence_id` 필드 추가. `target_word`가 `null`인 경우(발음 전부 기준 이상) 칭찬 화면으로 분기하는 규칙 추가.
+
 ---
 
-# 5. POST /internal/v1/feedback/reading — 낭독 피드백
+# 5. GET /internal/v1/feedback/sentences — 발음 연습 추천 문장 목록
+
+## 0️⃣ 어떤 View 에서 사용되는 API 인가요?
+
+발음 피드백 화면 진입 시 문장 선택 화면
+
+## 1️⃣ API 설명
+
+발음 연습용 추천 문장 10개(등교·급식·하교 3개씩 + 수업시간 시 1개)를 반환합니다.
+
+> **이 API는 프론트가 직접 부르는 게 아니라, Spring이 내부망에서 이 FastAPI 서버로 호출한 뒤 Spring 자체 API로 프론트에 재노출하는 용도입니다.**
+> 프론트가 이 중 1개를 고르면, 그 `sentence_id`와 녹음 파일을 `POST /internal/v1/feedback/speaking`으로 보내 채점합니다.
+
+## 2️⃣ Request
+
+파라미터 없음.
+
+```http
+GET /internal/v1/feedback/sentences
+```
+
+## 3️⃣ Response
+
+### ✅ 성공 (200 OK)
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `sentence_id` | string | 채점 API(`POST /internal/v1/feedback/speaking`)를 호출할 때 그대로 넘겨야 하는 값. Spring이 프론트에 내려줄 때도 이 값을 그대로 보존해야 합니다(프론트가 문장을 선택하면 이 id를 다시 Spring에 보내고, Spring이 채점 API를 호출할 때 이 id를 그대로 씁니다). |
+| `category` | string | `arrival`(등교) / `study`(수업시간) / `lunch`(점심) / `departure`(하교) 4가지 중 하나. 카테고리 화면 그룹핑용. |
+| `text` | string | 화면에 보여줄 실제 문장 원문. `study`만 여러 문장이 한 항목에 이어져 있다 — 시 전체를 한 번에 읽는다. |
+
+```json
+[
+  { "sentence_id": "arrival_1",   "category": "arrival",   "text": "안녕 나도 만나서 반가워 !" },
+  { "sentence_id": "arrival_2",   "category": "arrival",   "text": "안녕! 우리 친하게 지내자" },
+  { "sentence_id": "arrival_3",   "category": "arrival",   "text": "안녕 잘 부탁해 !" },
+  { "sentence_id": "study_1",     "category": "study",     "text": "노란 꽃이 피었어요. 예쁜 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요." },
+  { "sentence_id": "lunch_1",     "category": "lunch",     "text": "조금만 주세요." },
+  { "sentence_id": "lunch_2",     "category": "lunch",     "text": "적당히 주세요." },
+  { "sentence_id": "lunch_3",     "category": "lunch",     "text": "많이 주세요." },
+  { "sentence_id": "departure_1", "category": "departure", "text": "안녕히 가세요!" },
+  { "sentence_id": "departure_2", "category": "departure", "text": "네, 안녕히 가세요." },
+  { "sentence_id": "departure_3", "category": "departure", "text": "안녕히 계세요 !" }
+]
+```
+
+`study`는 다른 카테고리와 달리 **1개뿐이다** (3개씩이 아니다). 시가 하나뿐이라
+고를 필요가 없어서인 것으로 보인다.
+
+## 4️⃣ API 수정 로그
+
+- 2026-08-24 — 신규 추가. `/feedback/speaking`이 `sentence_id` 방식으로 바뀌면서, 프론트가 고를 수 있는 문장 목록을 내려주기 위해 신설.
+
+---
+
+# 6. POST /internal/v1/feedback/reading — 낭독 피드백
 
 > **아직 상세 명세가 작성되지 않았다.** Notion 표에 경로만 등록된 상태다.
 > 요청·응답 형식이 정해지면 이 문서에 추가한다.
@@ -281,7 +340,7 @@ Content-Type: multipart/form-data
 | 6 | TTS 응답 | **바이너리** `audio/mpeg` | JSON 내 base64 | 게이트웨이 릴레이 방식 변경 필요 |
 | 7 | 오디오 길이 제한 | 30초 | 60초 | 앱 녹음 제한 조정 필요 |
 | 8 | 말하기 피드백 입력 | **multipart (음성 파일)** | JSON (STT 결과 텍스트) | 호출 흐름 자체가 다름 |
-| 9 | 피드백 응답 내용 | 발음 점수(`z`, `worst_phone`, `quiz_sentence`) | 표현 교정(`naturalSentence`, `highlightWords`) | 기능 정의가 다름 |
+| 9 | 피드백 응답 내용 | 발음 점수(`z`, `worst_phone`) | 표현 교정(`naturalSentence`, `highlightWords`) | 기능 정의가 다름 |
 | 10 | `chat` (대화) | **없음** | 있음 | 앱에 자유 대화 화면이 없으므로 삭제 예정 |
 
 **8번과 9번이 가장 크다.** 게이트웨이 명세는 "STT로 텍스트를 얻은 뒤 그 텍스트로 피드백을 요청"하는 2단계 흐름인데, FastAPI는 **음성 파일을 직접 받아 발음을 채점**한다. 즉 피드백의 성격 자체가 다르다.

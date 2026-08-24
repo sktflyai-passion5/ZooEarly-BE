@@ -121,13 +121,43 @@ export interface paths {
          *
          *     - `/ai/feedback`과 다르다. 저쪽은 "어떤 단어를 골랐나"를 텍스트로 보고,
          *       이쪽은 "어떻게 소리 냈나"를 오디오로 본다. 그래서 STT를 거치지 않는다.
+         *     - `sentenceId`는 자유 텍스트가 아니다. `GET /ai/pronunciation/sentences`가
+         *       내려준 10개 중 하나를 그대로 돌려보내야 한다. FastAPI가 자기 목록에서
+         *       채점 기준 문장을 직접 찾기 때문이다 (2026-08-24 FastAPI 명세 변경).
          *     - 점수는 0~1이 아니라 z점수다. 또래 규준 대비 상대값이라 음수가 정상이며,
          *       화면에 숫자를 표시하지 않는다.
-         *     - 빈칸은 targetWord 하나뿐이다. warn 이 여러 개 켜져도 하나만 만든다.
-         *     - 규준 집단(만 8~13세 네이티브)이 실제 사용자와 달라 임계값 조정이 필요하다.
-         *       자세한 것은 명세서 §6 주의 참고.
+         *     - **잘함/못함 판정은 FastAPI가 한다.** `targetWord`가 `null`이면 발음이
+         *       전부 기준(z ≥ -1.5) 이상이라는 뜻이다 — 퀴즈 화면 없이 바로 칭찬 화면으로 간다.
+         *     - 빈칸은 `targetWord` 하나뿐이다. 화면의 빈칸 문장은 앱이 `sentence`와
+         *       `targetIndex`로 직접 만든다 — 서버는 만들어주지 않는다.
          */
         post: operations["pronunciation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ai/pronunciation/sentences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 발음 연습 문장 목록
+         * @description 발음 연습용 문장 10개(등교·급식·하교 3개씩 + 수업시간 시 1개)를 돌려준다.
+         *     "표현 고르기" 화면의 선택지 3개, 수업시간 "같이 읽어볼까요?"의 시 구절이
+         *     모두 여기서 온다 — 앱 번들 데이터가 아니다
+         *     (2026-08-24부터. 이전에는 시나리오별로 앱에 하드코딩돼 있었다).
+         *
+         *     `category`로 필터링해서 현재 시나리오에 맞는 항목만 보여준다.
+         *     고른 문장의 `sentenceId`를 `POST /ai/pronunciation`에 그대로 실어 보낸다.
+         */
+        get: operations["pronunciationSentences"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -603,10 +633,11 @@ export interface operations {
                      */
                     audio: string;
                     /**
-                     * @description 따라 말해야 했던 문장
-                     * @example 안녕! 나도 만나서 반가워
+                     * @description `GET /ai/pronunciation/sentences`에서 받은 값 중 하나.
+                     *     앱이 직접 만들지 않는다 — 서버 목록에 없는 값은 422가 난다.
+                     * @example arrival_2
                      */
-                    targetSentence: string;
+                    sentenceId: string;
                 };
             };
         };
@@ -621,11 +652,11 @@ export interface operations {
                      * @example {
                      *       "success": true,
                      *       "data": {
-                     *         "sentence": "안녕! 나도 만나서 반가워",
-                     *         "targetWord": "만나서",
+                     *         "sentenceId": "arrival_2",
+                     *         "sentence": "안녕! 우리 친하게 지내자",
+                     *         "targetWord": "지내자",
                      *         "targetIndex": 2,
                      *         "targetZ": -1.82,
-                     *         "quizSentence": "안녕! 나도 ＿＿＿ 반가워",
                      *         "words": [
                      *           {
                      *             "word": "안녕!",
@@ -634,22 +665,22 @@ export interface operations {
                      *             "worstPhone": null
                      *           },
                      *           {
-                     *             "word": "나도",
+                     *             "word": "우리",
                      *             "z": -0.42,
                      *             "warn": false,
                      *             "worstPhone": null
                      *           },
                      *           {
-                     *             "word": "만나서",
+                     *             "word": "친하게",
+                     *             "z": -1.12,
+                     *             "warn": false,
+                     *             "worstPhone": null
+                     *           },
+                     *           {
+                     *             "word": "지내자",
                      *             "z": -1.82,
                      *             "warn": true,
                      *             "worstPhone": "ㄴ"
-                     *           },
-                     *           {
-                     *             "word": "반가워",
-                     *             "z": -0.55,
-                     *             "warn": false,
-                     *             "worstPhone": null
                      *           }
                      *         ]
                      *       }
@@ -657,22 +688,21 @@ export interface operations {
                      */
                     "application/json": components["schemas"]["SuccessEnvelope"] & {
                         data?: {
+                            /** @description 요청에 실은 값을 그대로 돌려준다 */
+                            sentenceId?: string;
                             /** @description 채점 대상 문장 */
                             sentence?: string;
                             /**
-                             * @description 가장 약하게 발음한 어절. 빈칸으로 만들 대상
-                             * @example 만나서
+                             * @description 가장 약하게 발음한 어절. 빈칸으로 만들 대상.
+                             *     null이면 전부 기준 이상이라는 뜻 — 퀴즈 화면 없이
+                             *     바로 칭찬 화면으로 간다.
+                             * @example 지내자
                              */
                             targetWord?: string | null;
                             /** @description 그 어절이 몇 번째인가 (0부터) */
                             targetIndex?: number | null;
                             /** @description 그 어절의 z점수. 낮을수록 약하다 */
                             targetZ?: number | null;
-                            /**
-                             * @description 빈칸이 뚫린 문장
-                             * @example 안녕! 나도 ＿＿＿ 반가워
-                             */
-                            quizSentence?: string | null;
                             /** @description 어절별 채점 결과 */
                             words?: {
                                 word?: string;
@@ -689,6 +719,100 @@ export interface operations {
             413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["SttFailed"];
             429: components["responses"]["RateLimited"];
+            502: components["responses"]["AiServerError"];
+            504: components["responses"]["AiTimeout"];
+        };
+    };
+    pronunciationSentences: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 조회 성공 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "success": true,
+                     *       "data": [
+                     *         {
+                     *           "sentenceId": "arrival_1",
+                     *           "category": "arrival",
+                     *           "text": "안녕 나도 만나서 반가워 !"
+                     *         },
+                     *         {
+                     *           "sentenceId": "arrival_2",
+                     *           "category": "arrival",
+                     *           "text": "안녕! 우리 친하게 지내자"
+                     *         },
+                     *         {
+                     *           "sentenceId": "arrival_3",
+                     *           "category": "arrival",
+                     *           "text": "안녕 잘 부탁해 !"
+                     *         },
+                     *         {
+                     *           "sentenceId": "study_1",
+                     *           "category": "study",
+                     *           "text": "노란 꽃이 피었어요. 예쁜 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요."
+                     *         },
+                     *         {
+                     *           "sentenceId": "lunch_1",
+                     *           "category": "lunch",
+                     *           "text": "조금만 주세요."
+                     *         },
+                     *         {
+                     *           "sentenceId": "lunch_2",
+                     *           "category": "lunch",
+                     *           "text": "적당히 주세요."
+                     *         },
+                     *         {
+                     *           "sentenceId": "lunch_3",
+                     *           "category": "lunch",
+                     *           "text": "많이 주세요."
+                     *         },
+                     *         {
+                     *           "sentenceId": "departure_1",
+                     *           "category": "departure",
+                     *           "text": "안녕히 가세요!"
+                     *         },
+                     *         {
+                     *           "sentenceId": "departure_2",
+                     *           "category": "departure",
+                     *           "text": "네, 안녕히 가세요."
+                     *         },
+                     *         {
+                     *           "sentenceId": "departure_3",
+                     *           "category": "departure",
+                     *           "text": "안녕히 계세요 !"
+                     *         }
+                     *       ]
+                     *     }
+                     */
+                    "application/json": components["schemas"]["SuccessEnvelope"] & {
+                        data?: {
+                            /** @description 발음 채점 요청에 그대로 실어 보내는 값 */
+                            sentenceId?: string;
+                            /**
+                             * @description 등교/수업시간/급식/하교 구분. 소문자이고 §1.5의 Scenario enum
+                             *     (ARRIVAL/CLASS/LUNCH/DISMISSAL, 대문자)과 표기가 다르다 —
+                             *     이 API 전용 값이니 섞어 쓰지 않는다. study는 1개뿐이다(시 전체가
+                             *     한 항목에 이어져 있다) — 나머지 3개 카테고리는 3개씩이다.
+                             * @enum {string}
+                             */
+                            category?: "arrival" | "study" | "lunch" | "departure";
+                            /** @description 화면에 보여줄 문장 원문 */
+                            text?: string;
+                        }[];
+                    };
+                };
+            };
             502: components["responses"]["AiServerError"];
             504: components["responses"]["AiTimeout"];
         };
