@@ -17,7 +17,7 @@
 | 2 | POST | `/internal/v1/speech/synthesize` | 음성 합성 (TTS) | JSON | **바이너리 (audio/mpeg)** |
 | 3 | POST | `/internal/v1/text/translate` | 번역 | JSON | JSON |
 | 4 | POST | `/internal/v1/feedback/speaking` | 말하기 피드백 | **multipart** | JSON |
-| 5 | GET | `/internal/v1/feedback/sentences` | 발음 연습 추천 문장 9개 | - | JSON |
+| 5 | GET | `/internal/v1/feedback/sentences` | 발음 연습 추천 문장 10개 | - | JSON |
 | 6 | POST | `/internal/v1/feedback/reading` | 낭독 피드백 | (미작성) | (미작성) |
 
 ---
@@ -224,7 +224,7 @@ Content-Type: multipart/form-data
 | 필드 | 타입 | 필수 | 설명 |
 |---|---|---|---|
 | `audio_file` | file | ✅ | 녹음 파일. `SCORING_MAX_UPLOAD_MB`(기본 20MB) 이하 |
-| `sentence_id` | string (enum) | ✅ | `GET /internal/v1/feedback/sentences`에서 받은 9개 값 중 하나. `arrival_1`, `arrival_2`, `arrival_3`, `lunch_1`, `lunch_2`, `lunch_3`, `departure_1`, `departure_2`, `departure_3` |
+| `sentence_id` | string (enum) | ✅ | `GET /internal/v1/feedback/sentences`에서 받은 10개 값 중 하나. `arrival_1`, `arrival_2`, `arrival_3`, `study_1`, `lunch_1`, `lunch_2`, `lunch_3`, `departure_1`, `departure_2`, `departure_3` |
 
 ## 3️⃣ Response
 
@@ -272,7 +272,7 @@ Content-Type: multipart/form-data
 
 ## 1️⃣ API 설명
 
-발음 연습용 추천 문장 9개(카테고리 3개 × 3개)를 반환합니다.
+발음 연습용 추천 문장 10개(등교·급식·하교 3개씩 + 수업시간 시 1개)를 반환합니다.
 
 > **이 API는 프론트가 직접 부르는 게 아니라, Spring이 내부망에서 이 FastAPI 서버로 호출한 뒤 Spring 자체 API로 프론트에 재노출하는 용도입니다.**
 > 프론트가 이 중 1개를 고르면, 그 `sentence_id`와 녹음 파일을 `POST /internal/v1/feedback/speaking`으로 보내 채점합니다.
@@ -292,14 +292,15 @@ GET /internal/v1/feedback/sentences
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | `sentence_id` | string | 채점 API(`POST /internal/v1/feedback/speaking`)를 호출할 때 그대로 넘겨야 하는 값. Spring이 프론트에 내려줄 때도 이 값을 그대로 보존해야 합니다(프론트가 문장을 선택하면 이 id를 다시 Spring에 보내고, Spring이 채점 API를 호출할 때 이 id를 그대로 씁니다). |
-| `category` | string | `arrival`(등교) / `lunch`(점심) / `departure`(하교) 3가지 중 하나. 카테고리 화면 그룹핑용. |
-| `text` | string | 화면에 보여줄 실제 문장 원문. |
+| `category` | string | `arrival`(등교) / `study`(수업시간) / `lunch`(점심) / `departure`(하교) 4가지 중 하나. 카테고리 화면 그룹핑용. |
+| `text` | string | 화면에 보여줄 실제 문장 원문. `study`만 여러 문장이 한 항목에 이어져 있다 — 시 전체를 한 번에 읽는다. |
 
 ```json
 [
   { "sentence_id": "arrival_1",   "category": "arrival",   "text": "안녕 나도 만나서 반가워 !" },
   { "sentence_id": "arrival_2",   "category": "arrival",   "text": "안녕! 우리 친하게 지내자" },
   { "sentence_id": "arrival_3",   "category": "arrival",   "text": "안녕 잘 부탁해 !" },
+  { "sentence_id": "study_1",     "category": "study",     "text": "노란 꽃이 피었어요. 예쁜 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요." },
   { "sentence_id": "lunch_1",     "category": "lunch",     "text": "조금만 주세요." },
   { "sentence_id": "lunch_2",     "category": "lunch",     "text": "적당히 주세요." },
   { "sentence_id": "lunch_3",     "category": "lunch",     "text": "많이 주세요." },
@@ -308,6 +309,9 @@ GET /internal/v1/feedback/sentences
   { "sentence_id": "departure_3", "category": "departure", "text": "안녕히 계세요 !" }
 ]
 ```
+
+`study`는 다른 카테고리와 달리 **1개뿐이다** (3개씩이 아니다). 시가 하나뿐이라
+고를 필요가 없어서인 것으로 보인다.
 
 ## 4️⃣ API 수정 로그
 

@@ -61,12 +61,14 @@ ROUTES = {
     "/ai/pronunciation/sentences": "sentences",
 }
 
-# FastAPI 명세(2026-08-24 개정) 그대로. 등교·급식·하교 × 3개.
-# "표현 고르기" 화면의 선택지 3개가 여기서 온다 — 더 이상 앱 번들 데이터가 아니다.
+# FastAPI 명세(2026-08-24 개정) 그대로. 등교·급식·하교 × 3개 + 수업시간(study) × 1개.
+# "표현 고르기" 화면의 선택지 3개, 수업시간 시 읽기 문장이 여기서 온다 —
+# 더 이상 앱 번들 데이터가 아니다.
 SENTENCES = [
     {"sentenceId": "arrival_1",   "category": "arrival",   "text": "안녕 나도 만나서 반가워 !"},
     {"sentenceId": "arrival_2",   "category": "arrival",   "text": "안녕! 우리 친하게 지내자"},
     {"sentenceId": "arrival_3",   "category": "arrival",   "text": "안녕 잘 부탁해 !"},
+    {"sentenceId": "study_1",     "category": "study",     "text": "노란 꽃이 피었어요. 예쁜 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요."},
     {"sentenceId": "lunch_1",     "category": "lunch",     "text": "조금만 주세요."},
     {"sentenceId": "lunch_2",     "category": "lunch",     "text": "적당히 주세요."},
     {"sentenceId": "lunch_3",     "category": "lunch",     "text": "많이 주세요."},

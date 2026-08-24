@@ -273,7 +273,7 @@ arrival_2
 | 파트 | 필수 | 값 |
 |---|---|---|
 | `audio` | ✅ | 따라 말한 녹음. m4a/wav/webm, 최대 10MB · **30초** |
-| `sentenceId` | ✅ | `GET /internal/v1/feedback/sentences`가 준 9개 값 중 하나. **camelCase다** — FastAPI 응답 예시의 `sentence_id`와 대소문자만 다르다는 점 주의 |
+| `sentenceId` | ✅ | `GET /internal/v1/feedback/sentences`가 준 10개 값 중 하나. **camelCase다** — FastAPI 응답 예시의 `sentence_id`와 대소문자만 다르다는 점 주의 |
 
 > **STT를 거치지 않는다.** 발음은 텍스트로 알 수 없어서 녹음을 그대로 보낸다.
 > 게이트웨이는 오디오 형식·크기만 검증하고 통과시킨다. `sentenceId`가 유효한 값인지는
@@ -318,11 +318,18 @@ body 없음, 인증 헤더 없음. 게이트웨이는 이 요청을 그대로 �
 ```json
 { "success": true, "data": [
     { "sentenceId": "arrival_1", "category": "arrival", "text": "안녕 나도 만나서 반가워 !" },
-    { "sentenceId": "arrival_2", "category": "arrival", "text": "안녕! 우리 친하게 지내자" }
+    { "sentenceId": "arrival_2", "category": "arrival", "text": "안녕! 우리 친하게 지내자" },
+    { "sentenceId": "study_1", "category": "study", "text": "노란 꽃이 피었어요. 예쁜 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요." }
   ] }
 ```
 
 `sentence_id` → `sentenceId`만 camelCase로 바꾸면 된다. `category`·`text`는 그대로 쓴다.
+
+**`study_1`이 수업시간 시 읽기용이다** (2026-08-24 추가). 등교·급식·하교는 카테고리당
+3개씩인데 `study`만 1개다 — 시가 하나뿐이라 고를 필요가 없어서인 것으로 보인다.
+`text`도 다른 항목과 다르게 **문장 여러 개가 한 항목에 이어져 있다** (시 전체).
+이걸로 수업시간의 "같이 읽어볼까요?"가 등교/급식/하교와 **같은 `/pronunciation` 경로를
+그대로 쓸 수 있다** — 별도 낭독 전용 엔드포인트(`feedback/reading`)가 필요 없어졌다.
 
 ---
 
@@ -390,7 +397,7 @@ async def pronunciation(
 
 @app.get("/internal/v1/feedback/sentences")
 async def sentences():
-    # 9개 고정 목록. 요청 파라미터 없음
+    # 10개 고정 목록 (등교·급식·하교 3개씩 + 수업시간 시 1개). 요청 파라미터 없음
     ...
 ```
 

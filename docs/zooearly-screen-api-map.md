@@ -40,11 +40,12 @@
         │
         └─ 선택해보기 ─▶ ②' 표현 고르기                       ★ 화면 진입 시 1회
                              GET /pronunciation/sentences
-                             └ 문장 9개를 받아 category로 현재 시나리오
+                             └ 문장 10개를 받아 category로 현재 시나리오
                                (등교→arrival / 급식→lunch / 하교→departure) 3개만 보여준다
+                               (수업시간→study는 1개뿐이라 이 화면 자체가 없다 — 아래 참고)
                              "어떤 표현을 사용해볼까요?"
                              선택지 1·2·3 → 고른 항목의 sentenceId를 들고 있는다
-                             [다른 표현 보기] → 이미 받은 9개 안에서 순환. API 재호출 없음
+                             [다른 표현 보기] → 이미 받은 목록 안에서 순환. API 재호출 없음
         │
 ③ 피드백 배너                ⚠️ 현재 구현하지 않는다
 ④ 자연스러운 표현            ⚠️ 현재 구현하지 않는다
@@ -127,9 +128,9 @@
 |---|---|---|---|
 | 인트로 | `말해보기` | — | sentenceId 없는 경로. ⑤·발음 채점으로 이어지지 않는다 |
 | 인트로 | `선택해보기` | — | ②'로 전환 |
-| 표현 고르기 | (화면 진입) | **`GET /pronunciation/sentences`** | 파라미터 없음. 9개 중 `category`가 시나리오와 맞는 3개만 보여준다 |
+| 표현 고르기 | (화면 진입) | **`GET /pronunciation/sentences`** | 파라미터 없음. 10개 중 `category`가 시나리오와 맞는 3개만 보여준다 |
 | 표현 고르기 | 선택지 1·2·3 | — | 고른 항목의 `sentenceId`를 들고 있는다 (v1.5.0부터. 이전엔 `targetSentence`) |
-| 표현 고르기 | `다른 표현 보기` | — | 이미 받은 9개 안에서 순환. 재호출 없음 |
+| 표현 고르기 | `다른 표현 보기` | — | 같은 category 안에서 순환. 재호출 없음 |
 | 🎤 녹음 | **녹음 종료** | **`POST /stt`** | `audio`, `language`(BCP-47, 예 `ko-KR`) |
 | ~~피드백 배너~~ | — | — | **현재 구현하지 않는다** (`/feedback` 미사용) |
 | ~~자연스러운 표현~~ | — | — | **현재 구현하지 않는다** (`/feedback` 미사용) |
@@ -151,30 +152,34 @@
 | 책 페이지 넘기기 | 손가락 스와이프 | — | 앱 로컬 |
 | `15페이지! 잘 찾았어요` | `다음` | — | |
 | 시 읽기 | **시를 터치** | **`POST /tts`** | `language`=`"KOREAN"`. "시를 터치하면 목소리가 나와요" |
-| 시 읽기 | 🎤 `같이 읽어볼까요?` | `/pronunciation`과 **같은 로직·응답** (경로 미정) | 아래 참고 |
-| 피드백 | `다시 읽기` | — | 위와 같은 방식으로 한 번 더 |
+| 시 읽기 | (화면 진입) | — | 시 문장은 `GET /pronunciation/sentences`의 `category === "study"` 항목(`study_1`) — 고를 필요 없이 그 하나를 쓴다 |
+| 시 읽기 | 🎤 `같이 읽어볼까요?` | **`POST /pronunciation`** | `sentenceId="study_1"`. 등교·급식·하교와 **완전히 같은 호출**이다 |
+| 피드백 | `다시 읽기` | — | `/pronunciation`을 **한 번 더** 부른다 |
 
-> ### 시 읽기 — 응답 형식은 확정, 요청 경로는 아직 (2026-08-24 확인)
+> ### 시 읽기는 등교·급식·하교와 같은 경로를 그대로 쓴다 (2026-08-24 확정)
 >
-> **채점 로직과 응답은 `/pronunciation`(§6)과 동일하다.** 읽은 것 중 어절별 z점수를
-> 매기고, 가장 낮은 하나를 `targetWord`로 보낸다 — 등교·급식·하교와 완전히 같은 계약이다.
+> FastAPI의 `GET /pronunciation/sentences`에 `category: "study"`인 `study_1`이
+> 추가됐다. `text`는 시 전체("노란 꽃이 피었어요. 예쁜 꽃이 피었어요. 바람이
+> 살랑살랑 꽃이 웃어요.")가 한 항목에 이어져 있다.
+>
+> **이전 우려(별도 낭독 엔드포인트가 필요할 것)는 해소됐다.** `study_1`도 다른
+> 9개와 똑같은 `sentenceId`라서, ⑤ 따라 말하기와 똑같이 `POST /pronunciation`을
+> 그대로 호출하면 된다 — `/internal/v1/feedback/reading`을 기다릴 필요가 없다.
 >
 > ```json
-> { "sentenceId": "...", "sentence": "...", "targetWord": "지내자",
->   "targetIndex": 2, "targetZ": -1.82,
->   "words": [ { "word": "지내자", "z": -1.82, "warn": true, "worstPhone": "ㄴ" } ] }
+> { "sentenceId": "study_1",
+>   "sentence": "노란 꽃이 피었어요. 예쁜 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요.",
+>   "targetWord": "살랑살랑", "targetIndex": 5, "targetZ": -1.82,
+>   "words": [ "... 시 전체 어절", { "word": "살랑살랑", "z": -1.82, "warn": true, "worstPhone": null } ] }
 > ```
 >
 > 시안의 `"살랑살랑" 부분을 조금 더 천천히 읽어볼까요?` 는 이 `targetWord`를
-> 그대로 문구에 넣은 것으로 보면 된다.
+> 그대로 문구에 넣은 것이다. `words`가 시 전체 어절을 담으므로 다른 카테고리보다
+> 배열이 길다 — 화면 배선(빈칸 만들기 등)은 동일하게 처리하면 된다.
 >
-> **정해지지 않은 건 요청 쪽뿐이다.** 시 구절은 등교·급식·하교의 고정 9개 목록에
-> 없어서, 이 채점을 **어느 경로로 부르는지**(기존 `/pronunciation`을 그대로 쓰는지,
-> FastAPI 명세의 낭독 전용 경로 `/internal/v1/feedback/reading`을 새로 붙이는지)와
-> **시 구절의 `sentenceId`를 어디서 받는지**는 FastAPI 쪽 `feedback/reading`이
-> 아직 미작성이라(요청 형식 없음) 확정되지 않았다. 게이트웨이의 응답 처리 코드는
-> `/pronunciation`과 동일한 필드를 그대로 재사용하면 되므로, 경로가 정해지면
-> 반영 비용이 크지 않다.
+> **"표현 고르기" 화면과 다른 점 하나**: 등교/급식/하교는 3개 중 하나를 아이가
+> **고르지만**, `study`는 1개뿐이라 고르는 UI가 없다. 시 읽기 화면 진입 시
+> `category === "study"`인 항목을 바로 쓰면 된다.
 
 ---
 
@@ -225,13 +230,16 @@ GET /api/v1/ai/pronunciation/sentences
     { "sentenceId": "arrival_1", "category": "arrival", "text": "안녕 나도 만나서 반가워 !" },
     { "sentenceId": "arrival_2", "category": "arrival", "text": "안녕! 우리 친하게 지내자" },
     { "sentenceId": "arrival_3", "category": "arrival", "text": "안녕 잘 부탁해 !" },
+    { "sentenceId": "study_1", "category": "study", "text": "노란 꽃이 피었어요. 예쁜 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요." },
     { "sentenceId": "lunch_1", "category": "lunch", "text": "조금만 주세요." },
-    "... (급식 2개, 하교 3개 생략, 총 9개)"
+    "... (급식 2개, 하교 3개 생략, 총 10개)"
   ] }
 ```
 
-9개를 한 번에 받아서 `category`로 걸러 3개만 보여준다. 시나리오마다 따로 부르지 않는다.
-아이가 하나를 고르면 그 `sentenceId`를 들고 있다가 ⑤에서 그대로 다시 쓴다.
+10개를 한 번에 받아서 `category`로 걸러 화면에 맞는 것만 보여준다 — 등교/급식/하교는
+3개(고르는 화면), 수업시간(`study`)은 1개(고를 것 없이 바로 씀). 시나리오마다
+따로 부르지 않는다. 아이가 하나를 고르면(또는 `study`처럼 자동으로 정해지면) 그
+`sentenceId`를 들고 있다가 ⑤에서 그대로 다시 쓴다.
 
 ### 🎤 ⑤ 따라 말하기 녹음 — `/pronunciation` 1회
 
@@ -239,7 +247,7 @@ GET /api/v1/ai/pronunciation/sentences
 POST /api/v1/ai/pronunciation   Content-Type: multipart/form-data
 
 audio      : <녹음 파일>   m4a / wav / webm, 최대 10MB · 30초
-sentenceId : <선택한 값>   ②'에서 받은 9개 중 하나. 자유 텍스트가 아니다
+sentenceId : <선택한 값>   ②'(또는 시 읽기)에서 받은 10개 중 하나. 자유 텍스트가 아니다
 ```
 ```json
 200 OK

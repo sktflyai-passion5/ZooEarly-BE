@@ -1,6 +1,6 @@
 # 쥬얼리 (ZooEarly) — AI API 명세서
 
-> **v1.5.0 · 2026-08-24**
+> **v1.6.0 · 2026-08-24**
 > React Native 앱 ↔ API Gateway ↔ FastAPI Inference Server(STT / LLM / TTS → OpenAI API)
 > **이 문서가 기존 `zooearly-api-spec.md`(13개 엔드포인트)를 대체한다.** 시나리오·스토리·진행 상태는 전부 앱 로컬로 이동했고, 서버에 남는 것은 AI 추론뿐이다.
 
@@ -19,6 +19,7 @@
 
 | 버전 | 날짜 | 변경 | 앱 영향 |
 |---|---|---|---|
+| **1.6.0** | 2026-08-24 | `pronunciation/sentences`에 `study`(수업시간 시) 카테고리 추가. 9개 → **10개** | ⚠️ **있음** — 수업시간 "같이 읽어볼까요?"도 이제 이 목록의 `sentenceId`로 `/pronunciation`을 부를 수 있다. `study`는 3개가 아니라 1개다 |
 | **1.5.0** | 2026-08-24 | `pronunciation/sentences` 신설 · `pronunciation`의 `targetSentence`→`sentenceId` 전환 · `quizSentence` 제거 · 잘함/못함 판정이 앱→FastAPI로 이동 | ⚠️ **있음** — "표현 고르기" 선택지가 앱 번들이 아니라 서버 목록이 된다. `/pronunciation` 요청 필드명이 바뀐다. 빈칸 문장은 앱이 직접 만들어야 한다 |
 | **1.4.0** | 2026-08-22 | `pronunciation`(발음 채점) 추가 · 오디오 **최대 길이 60초 → 30초** | ⚠️ **있음** — 녹음을 30초에서 끊어야 한다. 발음 피드백 화면은 신규 구현 |
 | **1.3.0** | 2026-08-21 | `tts`의 `language`를 **필수**로 전환 | ⚠️ **있음** — `/tts`를 부르는 **모든 곳**에 넣어야 한다. 피드백 화면뿐 아니라 `DIALOGUE` 🔊·`LISTEN` 스텝의 한국어 재생도 `"KOREAN"`을 명시한다. 누락 시 `400 INVALID_PARAMETER` |
@@ -57,7 +58,7 @@ React Native App ──HTTPS/REST──▶ API Gateway ──HTTP──▶ FastA
 - 아이 호칭(`nickname`) — 앱 온보딩에서 필수로 받는 값이므로 앱이 매 요청에 보낸다. 서버는 저장하지 않는다
 
 **예외 — `pronunciation`의 `sentenceId`(§6-1)는 앱이 만들지 않는다.** 발음 연습 문장
-9개는 고정 목록이라 서버(`GET /pronunciation/sentences`)가 준다. 사용자별로 다른 걸
+10개는 고정 목록이라 서버(`GET /pronunciation/sentences`)가 준다. 사용자별로 다른 걸
 기억하는 게 아니라 누가 불러도 같은 값이 오므로 게이트웨이는 여전히 무상태다 — 아이
 개인의 상태를 저장하는 것과는 다르다.
 
@@ -455,7 +456,7 @@ Content-Type: multipart/form-data
 | 이름 | 타입 | 필수 | 설명 | 예시 |
 |---|---|---|---|---|
 | `audio` | `file` | ✅ | 따라 말한 녹음. §1.4 업로드 규격 | `speech.m4a` |
-| `sentenceId` | `string` | ✅ | `GET /api/v1/ai/pronunciation/sentences`(§6-1)에서 받은 9개 값 중 하나 | `"arrival_2"` |
+| `sentenceId` | `string` | ✅ | `GET /api/v1/ai/pronunciation/sentences`(§6-1)에서 받은 10개 값 중 하나 | `"arrival_2"` |
 
 > **자유 텍스트가 아니다.** (v1.5.0부터) FastAPI가 자기 문장 목록에서 채점 기준을
 > 직접 찾기 때문에, 목록에 없는 문장으로는 채점할 수 없다. 앱이 `sentenceId`를
@@ -528,8 +529,9 @@ curl -X POST https://zooearly.app/api/v1/ai/pronunciation \
 
 ## 6-1. GET /api/v1/ai/pronunciation/sentences — 발음 연습 문장 목록
 
-발음 연습용 문장 9개(등교·급식·하교 × 3개)를 받는다. **"어떤 표현을 사용해볼까요?"
-화면의 선택지 3개가 여기서 온다** — v1.5.0 전에는 앱 번들에 하드코딩돼 있었다.
+발음 연습용 문장 10개(등교·급식·하교 3개씩 + 수업시간 시 1개)를 받는다.
+**"어떤 표현을 사용해볼까요?" 화면의 선택지 3개, 수업시간 "같이 읽어볼까요?"의
+시 구절이 모두 여기서 온다** (2026-08-24부터) — 그 전에는 앱 번들에 하드코딩돼 있었다.
 
 ```http
 GET /api/v1/ai/pronunciation/sentences
@@ -542,8 +544,8 @@ GET /api/v1/ai/pronunciation/sentences
 | 이름 | 타입 | 설명 | 예시 |
 |---|---|---|---|
 | `sentenceId` | `string` | `POST /api/v1/ai/pronunciation`(§6)에 그대로 실어 보내는 값 | `"arrival_1"` |
-| `category` | `string(enum)` | `arrival` / `lunch` / `departure`. 화면 그룹핑용 | `"arrival"` |
-| `text` | `string` | 화면에 보여줄 문장 원문 | `"안녕 나도 만나서 반가워 !"` |
+| `category` | `string(enum)` | `arrival` / `study` / `lunch` / `departure`. 화면 그룹핑용 | `"arrival"` |
+| `text` | `string` | 화면에 보여줄 문장 원문. `study`만 여러 문장이 한 항목에 이어져 있다 (시 전체) | `"안녕 나도 만나서 반가워 !"` |
 
 ```json
 {
@@ -552,6 +554,7 @@ GET /api/v1/ai/pronunciation/sentences
     { "sentenceId": "arrival_1",   "category": "arrival",   "text": "안녕 나도 만나서 반가워 !" },
     { "sentenceId": "arrival_2",   "category": "arrival",   "text": "안녕! 우리 친하게 지내자" },
     { "sentenceId": "arrival_3",   "category": "arrival",   "text": "안녕 잘 부탁해 !" },
+    { "sentenceId": "study_1",     "category": "study",     "text": "노란 꽃이 피었어요. 예쁜 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요." },
     { "sentenceId": "lunch_1",     "category": "lunch",     "text": "조금만 주세요." },
     { "sentenceId": "lunch_2",     "category": "lunch",     "text": "적당히 주세요." },
     { "sentenceId": "lunch_3",     "category": "lunch",     "text": "많이 주세요." },
@@ -564,14 +567,16 @@ GET /api/v1/ai/pronunciation/sentences
 
 **설계 계약**
 
-1. **`category`는 §1.5의 `scenario` enum과 다르다.** `arrival`/`lunch`/`departure`는 소문자이고
-   이 API 전용 값이다. `scenario`(`ARRIVAL`/`LUNCH`/`DISMISSAL`, 대문자)와 섞어 쓰지 않는다.
-   특히 `departure` ↔ `DISMISSAL` 이름이 다르다는 점을 주의한다.
-2. **9개 전부를 한 번에 받는다.** 시나리오마다 따로 부르지 않는다 — 앱이 `category`로
-   화면에 맞는 3개만 걸러서 보여준다.
-3. **앱이 캐시해도 된다.** 문장 9개는 고정값이다. 앱 실행마다 새로 받을 필요는 없지만,
+1. **`category`는 §1.5의 `scenario` enum과 다르다.** `arrival`/`study`/`lunch`/`departure`는
+   소문자이고 이 API 전용 값이다. `scenario`(`ARRIVAL`/`CLASS`/`LUNCH`/`DISMISSAL`, 대문자)와
+   섞어 쓰지 않는다. 특히 `departure` ↔ `DISMISSAL`, `study` ↔ `CLASS` 이름이 다르다는 점을 주의한다.
+2. **`study`만 3개가 아니라 1개다.** 시가 하나뿐이라 고를 필요가 없어서인 것으로 보인다.
+   화면에 "고르는 UI"가 필요 없다 — `category === "study"`인 항목을 그대로 쓰면 된다.
+3. **10개 전부를 한 번에 받는다.** 시나리오마다 따로 부르지 않는다 — 앱이 `category`로
+   화면에 맞는 항목만 걸러서 보여준다.
+4. **앱이 캐시해도 된다.** 문장 10개는 고정값이다. 앱 실행마다 새로 받을 필요는 없지만,
    서버가 바뀔 가능성을 생각하면 세션마다 한 번은 새로 받는 편이 안전하다.
-4. **`말해보기`(자유 발화) 경로에는 `sentenceId`가 없다.** 이 목록에서 문장을 **고른**
+5. **`말해보기`(자유 발화) 경로에는 `sentenceId`가 없다.** 이 목록에서 문장을 **고른**
    경우에만 `sentenceId`가 생기고, 그 값으로만 §6 발음 채점을 부를 수 있다.
 
 **에러** — `502 AI_SERVER_ERROR`, `504 AI_TIMEOUT`
@@ -587,7 +592,7 @@ GET /api/v1/ai/pronunciation/sentences
 | §4 | POST | `/api/v1/ai/tts` | 텍스트 (JSON) | 음성(base64) | 🔊 버튼, 시 터치 |
 | §5 | POST | `/api/v1/ai/feedback` | 텍스트 2개 (JSON) | **표현 교정** 객체 | 이렇게 말하면 더 자연스러워요 — **현재 쓰는 화면 없음** |
 | §6 | POST | `/api/v1/ai/pronunciation` | 음성 + `sentenceId` (multipart) | **발음 채점** 객체 | 발음 피드백 (빈칸 퀴즈) |
-| §6-1 | GET | `/api/v1/ai/pronunciation/sentences` | 없음 | 문장 9개 배열 | 어떤 표현을 사용해볼까요? |
+| §6-1 | GET | `/api/v1/ai/pronunciation/sentences` | 없음 | 문장 10개 배열 | 어떤 표현을 사용해볼까요?, 같이 읽어볼까요? |
 
 > `feedback`과 `pronunciation`은 성격이 다르다. 전자는 **어떤 단어를 골랐나**(텍스트),
 > 후자는 **어떻게 소리 냈나**(오디오)를 본다. 화면도 다르다.
@@ -598,8 +603,9 @@ GET /api/v1/ai/pronunciation/sentences
 
 ```
 [표현 고르기 → 발음 피드백]
-  ① GET /pronunciation/sentences        → 문장 9개
-       └ category로 현재 시나리오(등교/급식/하교)에 맞는 3개만 골라 보여준다
+  ① GET /pronunciation/sentences        → 문장 10개
+       └ category로 현재 시나리오(등교/급식/하교)에 맞는 3개만 골라 보여준다.
+         (수업시간의 시 읽기는 category="study" 1개를 고를 것 없이 바로 쓴다)
   ② 아이가 3개 중 하나를 고른다          → 그 sentenceId를 들고 있는다
   ③ 🔊 문장 상자 탭 → POST /tts          → 미리 들어본다 (선택)
   ④ 🎤 따라 말하기 녹음 종료
@@ -642,7 +648,7 @@ GET /api/v1/ai/pronunciation/sentences
 >
 > **피드백 화면의 아랫상자에는 `language`를 반드시 넣는다.** 같은 `/tts`로 한국어와 모국어가 둘 다 나가므로, 언어를 안 알려주면 FastAPI가 텍스트로 추측해야 한다. 성조 부호 없는 로마자 표기(`chao! Minh cung rat vui`)는 오판되기 쉽고, 그러면 아이가 엉뚱한 발음을 듣는다.
 >
-> **"어떤 표현을 사용해볼까요?"의 선택지는 (v1.5.0부터) 서버가 준다.** `GET /pronunciation/sentences`가 내려주는 9개 중 시나리오에 맞는 3개다. §0.2의 무상태 원칙과는 어긋나지 않는다 — 서버가 사용자별로 다른 걸 기억하는 게 아니라, 누가 불러도 같은 고정 목록을 주는 것뿐이다. (다른 화면의 스텝 진행 상태 같은 건 여전히 앱 로컬이다.)
+> **"어떤 표현을 사용해볼까요?"의 선택지는 (v1.5.0부터) 서버가 준다.** `GET /pronunciation/sentences`가 내려주는 10개 중 시나리오에 맞는 항목이다(등교/급식/하교는 3개, 수업시간 시는 1개). §0.2의 무상태 원칙과는 어긋나지 않는다 — 서버가 사용자별로 다른 걸 기억하는 게 아니라, 누가 불러도 같은 고정 목록을 주는 것뿐이다. (다른 화면의 스텝 진행 상태 같은 건 여전히 앱 로컬이다.)
 
 ---
 

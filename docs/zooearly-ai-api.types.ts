@@ -122,7 +122,7 @@ export interface paths {
          *     - `/ai/feedback`과 다르다. 저쪽은 "어떤 단어를 골랐나"를 텍스트로 보고,
          *       이쪽은 "어떻게 소리 냈나"를 오디오로 본다. 그래서 STT를 거치지 않는다.
          *     - `sentenceId`는 자유 텍스트가 아니다. `GET /ai/pronunciation/sentences`가
-         *       내려준 9개 중 하나를 그대로 돌려보내야 한다. FastAPI가 자기 목록에서
+         *       내려준 10개 중 하나를 그대로 돌려보내야 한다. FastAPI가 자기 목록에서
          *       채점 기준 문장을 직접 찾기 때문이다 (2026-08-24 FastAPI 명세 변경).
          *     - 점수는 0~1이 아니라 z점수다. 또래 규준 대비 상대값이라 음수가 정상이며,
          *       화면에 숫자를 표시하지 않는다.
@@ -147,11 +147,12 @@ export interface paths {
         };
         /**
          * 발음 연습 문장 목록
-         * @description 발음 연습용 문장 9개(등교·급식·하교 × 3개)를 돌려준다.
-         *     "표현 고르기" 화면의 선택지 3개가 여기서 온다 — 앱 번들 데이터가 아니다
+         * @description 발음 연습용 문장 10개(등교·급식·하교 3개씩 + 수업시간 시 1개)를 돌려준다.
+         *     "표현 고르기" 화면의 선택지 3개, 수업시간 "같이 읽어볼까요?"의 시 구절이
+         *     모두 여기서 온다 — 앱 번들 데이터가 아니다
          *     (2026-08-24부터. 이전에는 시나리오별로 앱에 하드코딩돼 있었다).
          *
-         *     `category`로 필터링해서 현재 시나리오에 맞는 3개만 보여준다.
+         *     `category`로 필터링해서 현재 시나리오에 맞는 항목만 보여준다.
          *     고른 문장의 `sentenceId`를 `POST /ai/pronunciation`에 그대로 실어 보낸다.
          */
         get: operations["pronunciationSentences"];
@@ -757,6 +758,11 @@ export interface operations {
                      *           "text": "안녕 잘 부탁해 !"
                      *         },
                      *         {
+                     *           "sentenceId": "study_1",
+                     *           "category": "study",
+                     *           "text": "노란 꽃이 피었어요. 예쁜 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요."
+                     *         },
+                     *         {
                      *           "sentenceId": "lunch_1",
                      *           "category": "lunch",
                      *           "text": "조금만 주세요."
@@ -794,12 +800,13 @@ export interface operations {
                             /** @description 발음 채점 요청에 그대로 실어 보내는 값 */
                             sentenceId?: string;
                             /**
-                             * @description 등교/급식/하교 구분. 소문자이고 §1.5의 Scenario enum
-                             *     (ARRIVAL/LUNCH/DISMISSAL, 대문자)과 표기가 다르다 —
-                             *     이 API 전용 값이니 섞어 쓰지 않는다.
+                             * @description 등교/수업시간/급식/하교 구분. 소문자이고 §1.5의 Scenario enum
+                             *     (ARRIVAL/CLASS/LUNCH/DISMISSAL, 대문자)과 표기가 다르다 —
+                             *     이 API 전용 값이니 섞어 쓰지 않는다. study는 1개뿐이다(시 전체가
+                             *     한 항목에 이어져 있다) — 나머지 3개 카테고리는 3개씩이다.
                              * @enum {string}
                              */
-                            category?: "arrival" | "lunch" | "departure";
+                            category?: "arrival" | "study" | "lunch" | "departure";
                             /** @description 화면에 보여줄 문장 원문 */
                             text?: string;
                         }[];
