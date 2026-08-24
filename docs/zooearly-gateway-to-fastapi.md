@@ -60,7 +60,7 @@ FastAPI 명세(`zooearly-fastapi-spec.md`)와 대조한 결과다.
 | 3 | 에러 (422/429만) | `{"detail": "..."}` | `{"success": false, "error": {code, message, field}}` | 이 둘만 body가 앱까지 간다 |
 | 4 | 응답 필드명 | `translated_text`, `duration_sec` | `translation`, `durationSec` (camelCase) | 앱이 읽는 이름이다 |
 | 5 | 응답 언어 코드 | `ko` / `vi` / `zh` | `KOREAN` / `VIETNAMESE` / `CHINESE` | 앱 계약의 enum |
-| 6 | **표현 교정 API** | **없음** | `feedback/expression` 신설 | 아래 참고 |
+| ~~6~~ | ~~**표현 교정 API**~~ | 없음 | **당분간 만들지 않는다** | 화면을 구현하지 않기로 했다 |
 
 **왜 게이트웨이가 못 고치나** — CLAUDE.md의 핵심 제약이다.
 
@@ -72,12 +72,15 @@ FastAPI 명세(`zooearly-fastapi-spec.md`)와 대조한 결과다.
 **요청 쪽(`audio_file`, `language_code`, `ko`/`vi`/`zh`)은 게이트웨이가 맞춘다.**
 FastAPI 어댑터에서 같이 받아주면 총 작업량이 줄지만, 부담되면 게이트웨이가 변환한다.
 
-### ⚠️ 6번 — 표현 교정 API가 없다
+### 6번 — 표현 교정은 당분간 만들지 않는다
 
-FastAPI 5개 중 `naturalSentence`·`naturalHint`·`highlightWords`를 만들어줄 API가 없다.
-**"이렇게 말하면 더 자연스러워요" 화면이 통째로 동작하지 않는다.**
+`naturalSentence`·`naturalHint`·`highlightWords`를 만들어줄 API가 FastAPI에 없는데,
+**그 화면("이렇게 말하면 더 자연스러워요")을 구현하지 않기로 했다.** 그래서 지금은 불필요하다.
 
-`feedback/speaking`(발음 채점)과는 다른 기능이다.
+게이트웨이의 `/api/v1/ai/feedback`과 `inference.path.feedback` 설정은 그대로 둔다.
+안 부르면 아무 일도 일어나지 않고, 나중에 만들기로 하면 그때 붙이면 된다.
+
+참고로 `feedback/speaking`(발음 채점)과는 다른 기능이다.
 
 | | 표현 교정 | 발음 채점 |
 |---|---|---|
