@@ -15,6 +15,15 @@ spring:
       max-file-size: 12MB
       max-request-size: 15MB
 
+logging:
+  level:
+    # 요청 한 건당 한 줄. 앱을 붙여놓고 통신이 실제로 오는지 눈으로 보려는 것이다.
+    # 본문은 안 찍는다 — 아이 음성·발화가 로그에 쌓이면 안 된다.
+    com.zooearly.access: INFO
+  pattern:
+    # 접근 로그는 스레드명·로거 풀네임이 길어 읽기 나쁘다. 시각과 메시지만 남긴다.
+    console: "%d{HH:mm:ss} %-5level %msg%n"
+
 # 브라우저에서 앱을 띄울 때(Expo web)만 쓴다. 배포 대상인 RN 네이티브 앱은 CORS가 없다.
 # 비워두면 CORS를 아예 안 켠다 — 배포 기본값이 이것이다.
 # 예) CORS_ALLOWED_ORIGINS=http://localhost:8081
