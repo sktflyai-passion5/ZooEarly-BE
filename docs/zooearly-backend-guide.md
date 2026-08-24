@@ -1,7 +1,7 @@
 # 쥬얼리 (ZooEarly) — 백엔드 개발 가이드
 
 > **v1.0 · 2026-08-21**
-> GitHub 세팅 → VS Code 개발 환경 → 개발 흐름 → Azure App Service 배포
+> GitHub 세팅 → VS Code 개발 환경 → 개발 흐름 → Docker · Azure Container Apps 배포
 > 대상: Spring Boot API Gateway 담당자
 
 ---
@@ -26,7 +26,7 @@ DB 없음, 로그인 없음, 비즈니스 로직 없음. 이게 이 프로젝트
 | 2 | GitHub 레포 생성 + 초기 세팅 | 30분 |
 | 3 | 로컬에서 실행·테스트 | 30분 |
 | 4 | 기능 개발 (브랜치 → PR → 머지) | 반복 |
-| 5 | Azure App Service 배포 | 1~2시간 (첫 배포) |
+| 5 | Docker · Azure Container Apps 배포 | 2~3시간 (첫 배포) |
 
 ### 0.3 미리 알아둘 용어
 
@@ -36,7 +36,9 @@ DB 없음, 로그인 없음, 비즈니스 로직 없음. 이게 이 프로젝트
 | **Gradle** | 라이브러리를 자동으로 받아오고 빌드해주는 도구. `build.gradle`이 설정 파일 |
 | **jar 파일** | 프로젝트 전체를 하나로 압축한 실행 파일. 배포할 때 이것만 서버에 올린다 |
 | **빌드(build)** | 소스코드 → 실행 가능한 jar로 변환하는 것 |
-| **App Service** | Azure가 관리해주는 웹 앱 실행 환경. jar만 올리면 서버 관리 없이 24시간 돌아간다 |
+| **컨테이너(Docker)** | 앱과 실행 환경을 통째로 묶은 상자. 내 PC에서 돌던 게 서버에서 그대로 돈다 |
+| **Container Apps** | Azure가 관리해주는 컨테이너 실행 환경. 이미지를 올리면 서버 관리 없이 24시간 돌아간다 |
+| **ACR** | Azure의 컨테이너 이미지 보관소. 빌드한 이미지를 여기 올리면 Container Apps가 가져다 쓴다 |
 | **az CLI** | 터미널에서 Azure 리소스를 만들고 배포하는 명령어 도구 |
 | **브랜치** | 코드의 평행세계. 작업하다 망해도 원본은 안전하다 |
 
@@ -305,7 +307,7 @@ cd ZooEarly-BE
 | `zooearly-ai-api-spec.md` | 사람용 명세서 | 앱이 지켜야 할 규칙이 여기 있다 (history 관리, 에러 폴백, 캐싱 등) |
 | `zooearly-ai-openapi.yaml` | Swagger 명세 | editor.swagger.io에 붙여넣으면 UI로 볼 수 있다 |
 | `zooearly-ai-api.types.ts` | TypeScript 타입 | 그대로 import해서 쓰면 필드 오타가 컴파일 에러로 잡힌다 |
-| (말로) 서버 주소 | 개발 중엔 `http://localhost:8080`, 배포 후엔 `https://zooearly-gateway.azurewebsites.net` | 요청 보낼 곳 |
+| (말로) 서버 주소 | 개발 중엔 `http://localhost:8080`, 배포 후엔 Container Apps FQDN (§5.11) | 요청 보낼 곳 |
 | (말로) 연동 가능 시점 | 언제부터 실제 호출 테스트가 되는지 | 프론트가 mock으로 갈지 실서버로 갈지 판단 |
 
 ---
@@ -469,126 +471,196 @@ src/main/java/com/zooearly/
 | 한글이 `???`로 깨짐 | 인코딩 | 파일 저장 시 UTF-8 확인 |
 
 ---
+## 5. Azure Container Apps 배포 (Docker)
 
-## 5. Azure App Service 배포
+### 5.1 왜 Azure인가, 왜 Container Apps인가
 
-### 5.1 왜 Azure인가, 왜 App Service인가
-
-- **FastAPI/모델 쪽이 이미 Azure로 배포한다** (Container Apps, `koreacentral` 리전 — `DEPLOY_azure.md`). 게이트웨이도 같은 클라우드·같은 리전에 두면 두 서버 사이 지연이 줄고, 방화벽·네트워크 설정을 따로 두 클라우드에서 익힐 필요가 없다.
-- FastAPI는 700MB대 모델을 메모리에 올려야 해서 Container Apps(Docker, 2vCPU/4GiB)가 필요하지만, **이 게이트웨이는 모델이 없는 얇은 릴레이**다. 그만큼 무거운 선택지는 필요 없다 — **App Service(Linux, Java 17 내장 런타임)** 로 충분하다. Dockerfile을 만들 필요도 없다. jar 하나만 올리면 된다.
-- App Service는 기본으로 `https://<이름>.azurewebsites.net` HTTPS 주소를 준다. EC2 방식이었다면 인증서를 직접 붙이기 전까지 앱에 cleartext 예외(`usesCleartextTraffic`, `NSAllowsLocalNetworking`)를 걸어둬야 했는데, Azure는 처음부터 https라 배포 시점엔 그 설정을 뺄 수 있다.
+- **FastAPI/모델 쪽이 이미 Azure Container Apps(`koreacentral`)로 배포한다** (`DEPLOY_azure.md`). 게이트웨이도 같은 클라우드·같은 리전·같은 방식으로 두면 두 서버 사이 지연이 줄고, **팀 전체가 배포 방식 하나만 익히면 된다.**
+- 컨테이너로 만들면 "내 컴퓨터에서는 되는데" 문제가 사라진다. 로컬에서 돌린 이미지가 서버에서 그대로 돈다.
+- 다만 **리소스는 FastAPI보다 훨씬 작게 잡는다.** FastAPI는 700MB대 모델을 메모리에 올려야 해서 2vCPU/4GiB가 필요하지만, 이 게이트웨이는 모델이 없는 얇은 릴레이라 **0.5vCPU / 1Gi로 충분**하다.
+- Container Apps는 `https://<이름>.<지역>.azurecontainerapps.io` HTTPS 주소를 기본으로 준다. 인증서를 따로 붙일 필요가 없다.
 
 ### 5.2 가격 — 요금 사고 막는 습관
 
-| | 내용 |
+| 항목 | 대략 |
 |---|---|
-| 무료 체험 | 신규 계정 **$200 크레딧**(30일) — 데모 준비 기간엔 이걸로 충분 |
-| 상시 운영 | App Service **Basic B1**(1 vCore/1.75GB) 기준 월 대략 $13 내외. 정확한 값은 [Azure 가격 계산기](https://azure.microsoft.com/pricing/calculator/)에서 리전(`Korea Central`)·SKU로 직접 확인한다 |
-| 테스트용 무료 티어 | **F1(Free)** — 계속 무료지만 하루 CPU 60분 제한이 있고 5.4의 Always On을 못 켠다. 개발 중 연결 확인용으로는 충분, **발표 당일엔 B1 이상 권장** |
+| 무료 체험 | 신규 계정 **$200 크레딧**(30일) |
+| Container Apps (0.5vCPU/1Gi, min-replicas 1) | 월 1~2만원 |
+| Azure Container Registry **Basic** | 월 약 $5 |
 
-- Cost Management → Budgets에서 월 예산 알림을 걸어둔다 (AWS Budgets와 같은 개념).
-- 안 쓸 때는 `az webapp stop`으로 중지한다. 프로젝트가 완전히 끝나면 리소스 그룹째 삭제해서 요금을 완전히 끊는다.
+- Cost Management → **Budgets**에서 월 예산 알림을 먼저 걸어둔다. 이걸 안 하면 다음 달 카드값을 보고 알게 된다.
+- 프로젝트가 끝나면 **리소스 그룹째 삭제**한다 (`az group delete --name zooearly-rg`). 그래야 요금이 완전히 끊긴다.
 
-### 5.3 리소스 만들기 (CLI)
+> **ACR 대신 ghcr.io(GitHub Container Registry)를 쓰면 이미지 저장이 무료다.** 대신 프라이빗 레포라 Container Apps에 pull 인증을 따로 걸어야 해서 한 단계가 늘어난다. 월 $5를 아낄지, 설정을 줄일지의 선택이다.
+
+### 5.3 컨테이너 이미지 — 로컬에서 먼저 확인
+
+레포 루트에 `Dockerfile`과 `.dockerignore`가 이미 들어있다. **멀티스테이지 빌드**라 최종 이미지에 JDK·소스·Gradle 캐시가 남지 않는다.
+
+```bash
+# 이미지 빌드
+docker build -t zooearly-gateway:local .
+
+# 실행 (로컬 확인용 — FastAPI 주소는 아직 안 줘도 된다)
+docker run --rm -p 8080:8080 zooearly-gateway:local
+```
+
+`Started ZooEarlyApplication`이 뜨면 성공이다. 다른 터미널에서:
+
+```bash
+curl -X POST http://localhost:8080/api/v1/ai/tts \
+  -H "Content-Type: application/json" -d '{}'
+# {"success":false,"error":{"code":"INVALID_PARAMETER",...,"field":"text"}}
+```
+
+**서버에 올리기 전에 이걸 먼저 통과시킨다.** 로컬에서 안 되는 이미지는 Azure에서도 안 된다.
+
+> **실측 참고** — 최종 이미지 **342MB**, 기동 시간 **약 2.5초**.
+> 런타임 베이스로 `jre-alpine`을 골랐다. `jre-jammy`로 만들면 460MB가 나오는데, 둘 다 정상 동작을 확인한 뒤 더 작은 쪽을 택했다. 이 서버는 네이티브 라이브러리를 쓰지 않아 alpine에서 문제가 될 지점이 없다.
+
+### 5.4 Azure 리소스 만들기
 
 [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)를 설치하고 `az login` 후 진행한다.
 
 ```bash
-# 리소스 그룹 — FastAPI와 같은 리전에 둔다 (DEPLOY_azure.md와 맞춤)
+# 확장 설치 (최초 1회)
+az extension add --name containerapp --upgrade
+az provider register --namespace Microsoft.App
+az provider register --namespace Microsoft.OperationalInsights
+
+# 리소스 그룹 — FastAPI와 같은 리전에 둔다
 az group create --name zooearly-rg --location koreacentral
 
-# App Service Plan — Basic B1, Linux
-az appservice plan create \
-  --name zooearly-plan \
-  --resource-group zooearly-rg \
-  --location koreacentral \
-  --sku B1 \
-  --is-linux
+# 컨테이너 레지스트리 (이미지 보관소). 이름은 소문자·숫자만, 전역에서 유일해야 한다
+az acr create --name zooearlyacr --resource-group zooearly-rg --sku Basic --admin-enabled true
 
-# Web App — Java 17
-az webapp create \
+# Container Apps 실행 환경
+az containerapp env create \
+  --name zooearly-env \
+  --resource-group zooearly-rg \
+  --location koreacentral
+```
+
+### 5.5 이미지 올리고 앱 만들기
+
+```bash
+# ACR에 로그인하고 이미지를 빌드해서 푸시한다
+az acr login --name zooearlyacr
+docker build -t zooearlyacr.azurecr.io/zooearly-gateway:v1 .
+docker push zooearlyacr.azurecr.io/zooearly-gateway:v1
+
+# Container App 생성
+az containerapp create \
   --name zooearly-gateway \
   --resource-group zooearly-rg \
-  --plan zooearly-plan \
-  --runtime "JAVA:17-java17"
+  --environment zooearly-env \
+  --image zooearlyacr.azurecr.io/zooearly-gateway:v1 \
+  --registry-server zooearlyacr.azurecr.io \
+  --target-port 8080 \
+  --ingress external \
+  --cpu 0.5 --memory 1Gi \
+  --min-replicas 1 --max-replicas 3 \
+  --env-vars INFERENCE_BASE_URL="https://<FastAPI 주소>" INFERENCE_API_KEY=secretref:inference-api-key \
+  --secrets inference-api-key="<FastAPI가 발급한 키>"
 ```
 
-`zooearly-gateway`는 Azure 전역에서 유일한 이름이어야 한다 (도메인의 일부라서). 이미 쓰이고 있으면 `zooearly-gateway-<팀명>`처럼 바꾼다. 주소는 `https://<이름>.azurewebsites.net`이 된다.
+**`--min-replicas 1`이 중요하다.** 0으로 두면 요청이 없을 때 인스턴스가 완전히 내려가고, 그 뒤 첫 요청이 기동을 기다리느라 느려진다. 발표 중에 이런 일이 나면 곤란하다. (FastAPI 쪽도 같은 이유로 1을 쓴다 — 그쪽은 모델 로딩 때문에 30초가 넘어서 훨씬 절박하다.)
 
-### 5.4 환경변수 설정
-
-EC2에서 `export`나 systemd `Environment=`로 넣던 것을 **App Settings**로 넣는다. **비밀값이 실제로 들어가는 유일한 곳이다 — `application.yml`이나 코드에는 절대 넣지 않는다** (CLAUDE.md 비밀값 규칙).
+**주소 확인:**
 
 ```bash
-az webapp config appsettings set \
-  --name zooearly-gateway \
-  --resource-group zooearly-rg \
-  --settings \
-    INFERENCE_BASE_URL="https://<FastAPI 주소>" \
-    INFERENCE_API_KEY="<FastAPI가 발급한 키>"
+az containerapp show --name zooearly-gateway --resource-group zooearly-rg \
+  --query properties.configuration.ingress.fqdn -o tsv
+# zooearly-gateway.xxxx.koreacentral.azurecontainerapps.io
 ```
 
-`INFERENCE_API_KEY`는 FastAPI가 `X-API-Key` 헤더로 인증을 검사하기 때문에 필요하다 (`DEPLOY_azure.md` §4, [zooearly-gateway-to-fastapi.md](zooearly-gateway-to-fastapi.md) 참고). FastAPI 쪽 경로를 바꿨다면 `INFERENCE_PATH_*` 값들도 같이 넣는다 (기본값은 `application.yml` 참고).
+### 5.6 비밀값 다루기 ⚠️
 
-Always On 켜기 (B1 이상에서만 가능 — 요청이 없어도 프로세스를 안 내려서, 한동안 조용하다가 들어온 첫 요청이 느려지는 걸 막는다):
+`INFERENCE_API_KEY`는 FastAPI가 `X-API-Key` 헤더로 인증을 검사하기 때문에 필요하다 (`DEPLOY_azure.md` §4). **이 값이 없으면 FastAPI가 401을 돌려준다.**
+
+- 위 명령의 `--secrets`처럼 **Container Apps 시크릿으로 넣고 `secretref:`로 참조**한다. 평문 `--env-vars`에 직접 쓰지 않는다 — 그러면 `az containerapp show` 출력에 그대로 찍힌다
+- **`application.yml`이나 코드에는 절대 넣지 않는다.** 거기엔 `${환경변수}` 참조만 둔다 (CLAUDE.md 비밀값 규칙)
+- 값을 나중에 바꾸려면:
 
 ```bash
-az webapp config set --name zooearly-gateway --resource-group zooearly-rg --always-on true
+az containerapp secret set --name zooearly-gateway --resource-group zooearly-rg \
+  --secrets inference-api-key="<새 키>"
 ```
 
-### 5.5 jar 빌드 & 배포
+FastAPI 쪽 경로를 바꿨다면 `INFERENCE_PATH_*` 값들도 같이 넣는다 (기본값은 `application.yml` 참고).
 
-서버에 자바를 따로 설치할 필요가 없다 — App Service의 Java 17 런타임이 이미 올라가 있다. **내 컴퓨터에서 빌드한 jar를 그대로 올리기만 하면 된다.**
-
-```cmd
-REM ① 빌드 — build\libs\ 에 jar가 생긴다  (Mac/Linux는 ./gradlew clean build)
-gradlew.bat clean build
-
-REM ② 배포
-az webapp deploy ^
-  --name zooearly-gateway ^
-  --resource-group zooearly-rg ^
-  --src-path build\libs\zooearly-gateway-0.0.1-SNAPSHOT.jar ^
-  --type jar
-```
-
-배포 로그로 기동 확인:
+### 5.7 확인
 
 ```bash
-az webapp log tail --name zooearly-gateway --resource-group zooearly-rg
-```
+FQDN=$(az containerapp show --name zooearly-gateway --resource-group zooearly-rg \
+  --query properties.configuration.ingress.fqdn -o tsv)
 
-`Started ZooEarlyApplication`이 보이면 성공이다.
-
-### 5.6 확인
-
-```bash
-curl -X POST https://zooearly-gateway.azurewebsites.net/api/v1/ai/tts \
+curl -X POST https://$FQDN/api/v1/ai/tts \
   -H "Content-Type: application/json" -d '{}'
 ```
 
-400 에러가 명세 포맷으로 오면 **배포 성공이다.** SSH 접속이나 방화벽(보안 그룹) 설정이 따로 필요 없다 — EC2 5.3~5.4에 해당하는 작업 전체가 사라졌다.
+400 에러가 명세 포맷으로 오면 **배포 성공이다.**
 
-### 5.7 계속 돌아가게 하기
+로그 보기:
 
-EC2는 SSH 연결이 끊기면 프로세스도 같이 죽어서 nohup이나 systemd 유닛이 필요했다. **App Service는 그 개념 자체가 없다** — `az webapp deploy`로 올린 순간부터 관리형 프로세스로 계속 실행되고, 죽으면 플랫폼이 자동으로 재시작한다. 5.4의 Always On은 "죽었을 때 재시작"이 아니라 "유휴 상태에서도 안 내려가게" 하는 별개의 설정이다.
-
-### 5.8 코드를 수정했을 때 (재배포)
-
-```cmd
-gradlew.bat clean build
-az webapp deploy --name zooearly-gateway --resource-group zooearly-rg --src-path build\libs\zooearly-gateway-0.0.1-SNAPSHOT.jar --type jar
+```bash
+az containerapp logs show --name zooearly-gateway --resource-group zooearly-rg --follow
 ```
 
-EC2의 "빌드 → scp로 전송 → SSH 접속 → systemctl restart" 네 단계가 빌드 한 번 + `az webapp deploy` 한 줄로 끝난다.
+### 5.8 헬스체크 (probe)
 
-### 5.9 프론트에 알려줄 주소
+**헬스체크는 Azure가 "이 서버 아직 살아있냐?"를 주기적으로 물어보는 것이다.** 프로세스가 떠 있어도 실제로는 응답을 못 하는 상태가 있을 수 있어서, 포트만 보고 판단하지 않으려는 장치다.
+
+**현재 설정: 별도 probe를 걸지 않았다.** Container Apps가 기본으로 TCP 확인(8080 포트가 열려 있나)을 하고, 컨테이너가 죽으면 자동으로 재시작한다. 데모·발표 규모에서는 이걸로 충분하다.
+
+더 정확한 헬스체크를 원하면 Spring Boot Actuator를 넣어 `/actuator/health`를 쓰는 방법이 있다. 다만 **엔드포인트가 하나 늘어나는 변경이라 팀 확인 후에 넣는다** (CLAUDE.md: 엔드포인트를 임의로 추가하지 않는다). 장단점은 아래 표와 같다.
+
+| 방식 | 잡아내는 것 | 비용 |
+|---|---|---|
+| **TCP (현재)** | 프로세스가 죽거나 포트가 닫힘 | 설정 0 |
+| Actuator `/actuator/health` | 위 + Spring이 정상 기동했는지, 요청 받을 준비가 됐는지 | 의존성 1줄 + 설정 |
+
+### 5.9 코드를 수정했을 때 (재배포)
+
+```bash
+docker build -t zooearlyacr.azurecr.io/zooearly-gateway:v2 .
+docker push zooearlyacr.azurecr.io/zooearly-gateway:v2
+
+az containerapp update --name zooearly-gateway --resource-group zooearly-rg \
+  --image zooearlyacr.azurecr.io/zooearly-gateway:v2
+```
+
+**태그를 `v1`, `v2`처럼 올려가며 쓴다.** `latest`로 덮어쓰면 "지금 서버에 뭐가 떠 있는지" 알 수 없어지고, 문제가 생겼을 때 되돌릴 수도 없다. 태그를 나눠두면 이전 버전으로 즉시 롤백할 수 있다:
+
+```bash
+az containerapp update --name zooearly-gateway --resource-group zooearly-rg \
+  --image zooearlyacr.azurecr.io/zooearly-gateway:v1     # 되돌리기
+```
+
+> 이 과정은 **5.10의 GitHub Actions로 자동화하는 것이 최종 목표**다. 위 명령들은 자동화가 붙기 전, 그리고 문제가 생겨 수동으로 손봐야 할 때 쓴다.
+
+### 5.10 CI/CD (GitHub Actions)
+
+브랜치 전략(`main` = 시연 가능한 안정판)에 그대로 맞춘다.
+
+| 트리거 | 하는 일 |
+|---|---|
+| `dev`로 가는 PR / 푸시 | 빌드 + 테스트만 (`build.yml` — 이미 있음) |
+| **`main` 머지** | 이미지 빌드 → ACR 푸시 → Container Apps 배포 |
+
+**`main`에 머지 = 배포**로 두면 규칙이 새로 늘지 않는다. `main`은 원래 "그 시점에 돌아가는 버전"이어야 하므로, 그게 곧 배포 대상이다.
+
+인증은 **OIDC(federated credentials)** 를 권장한다. GitHub Actions가 Azure에 접속할 때 비밀번호나 publish profile을 GitHub Secrets에 저장하지 않아도 되는 방식이라, "비밀값을 레포에 두지 않는다"는 원칙과 결이 같다.
+
+> 워크플로 파일(`deploy.yml`)은 Azure 리소스를 실제로 만든 뒤에 추가한다. 리소스가 없는 상태로 워크플로만 있으면 `main`에 머지될 때마다 실패한다.
+
+### 5.11 프론트에 알려줄 주소
 
 ```
-https://zooearly-gateway.azurewebsites.net
+https://zooearly-gateway.xxxx.koreacentral.azurecontainerapps.io
 ```
 
-EC2의 퍼블릭 IP는 인스턴스를 껐다 켜면 바뀌어서 Elastic IP를 따로 고정해야 했다. App Service는 **리소스를 지우지 않는 한 이 도메인이 그대로 고정**이라 그 작업이 필요 없다.
+정확한 값은 5.5의 `az containerapp show`로 확인한다. **리소스를 지우지 않는 한 이 주소는 고정**이므로 한 번만 알려주면 된다.
 
 ---
 
@@ -597,14 +669,16 @@ EC2의 퍼블릭 IP는 인스턴스를 껐다 켜면 바뀌어서 Elastic IP를 
 발표·데모 전에 확인한다.
 
 - [ ] `./gradlew build` 가 로컬에서 통과한다
-- [ ] `az webapp deploy`로 올린 뒤 `az webapp log tail`에 `Started ZooEarlyApplication`이 찍혔다
-- [ ] 외부에서 `curl https://zooearly-gateway.azurewebsites.net/...`로 API가 응답한다 (400/502라도 응답하면 OK)
+- [ ] `docker build` → `docker run`으로 **로컬에서 먼저** 400 응답을 확인했다 (§5.3)
+- [ ] `az containerapp logs show`에 `Started ZooEarlyApplication`이 찍혔다
+- [ ] 외부에서 `curl https://<FQDN>/api/v1/ai/tts`로 API가 응답한다 (400/502라도 응답하면 OK)
 - [ ] FastAPI가 떠 있고, `INFERENCE_BASE_URL`이 그 주소를 가리킨다
-- [ ] `INFERENCE_API_KEY`가 App Settings에 설정되어 있다 (없으면 FastAPI가 401을 준다)
+- [ ] `INFERENCE_API_KEY`가 **Container Apps 시크릿**으로 들어가 있다 (없으면 FastAPI가 401을 준다)
 - [ ] 실제 요청 하나가 200으로 끝까지 통한다 (앱 → 게이트웨이 → FastAPI → OpenAI)
+- [ ] `--min-replicas 1`이다 (발표 중 첫 요청 지연 방지)
+- [ ] 배포한 이미지 태그를 알고 있다 (`latest` 말고 `v1`/`v2`) — 문제 생기면 즉시 롤백
 - [ ] Azure Cost Management → Budgets 알림이 설정되어 있다
-- [ ] 프론트 담당자가 서버 주소(`https://zooearly-gateway.azurewebsites.net`)를 알고 있다
-- [ ] Always On이 켜져 있다 (B1 이상, 발표 중 첫 요청 지연 방지)
+- [ ] 프론트 담당자가 서버 주소(FQDN)를 알고 있다
 - [ ] **API 키가 GitHub에 올라가지 않았다** (`git log -p | grep -i "key\|secret"` 로 확인)
 
 ---
@@ -613,7 +687,9 @@ EC2의 퍼블릭 IP는 인스턴스를 껐다 켜면 바뀌어서 Elastic IP를 
 
 - [Spring Boot in Visual Studio Code](https://code.visualstudio.com/docs/java/java-spring-boot) — VS Code 공식 Spring Boot 가이드
 - [Java extensions for Visual Studio Code](https://code.visualstudio.com/docs/java/extensions) — 확장팩 목록
-- [Deploy a Java app to Azure App Service](https://learn.microsoft.com/azure/app-service/quickstart-java) — App Service Java 배포 공식 가이드
+- [Azure Container Apps 문서](https://learn.microsoft.com/azure/container-apps/) — Container Apps 공식 가이드
+- [Container Apps에 컨테이너 배포하기](https://learn.microsoft.com/azure/container-apps/quickstart-code-to-cloud) — 이미지 빌드 → 배포 퀵스타트
 - [Azure CLI 설치](https://learn.microsoft.com/cli/azure/install-azure-cli) — `az` 명령 설치
+- [GitHub Actions에서 Azure OIDC 인증](https://learn.microsoft.com/azure/developer/github/connect-from-azure-openid-connect) — 시크릿 없이 배포 붙이기
 - [Azure 가격 계산기](https://azure.microsoft.com/pricing/calculator/) — 최신 요금 확인
 - [Eclipse Temurin JDK 17](https://adoptium.net/temurin/releases/?version=17) — JDK 다운로드
