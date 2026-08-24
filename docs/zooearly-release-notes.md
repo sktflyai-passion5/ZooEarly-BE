@@ -14,9 +14,11 @@
   실측이 아니라 여유값이라 FastAPI 쪽 실제 소요 시간이 나오면 줄인다
 - 장면 개수·순서·조건부 필수 필드를 게이트웨이가 먼저 400으로 끊는다.
   LLM 호출까지 갔다가 422로 돌아오는 왕복이 낭비라서다
-- 요청 필드는 **camelCase로 나간다**(`childName`, `partnerLine` …). FastAPI 명세 예시는
-  snake_case지만, 게이트웨이가 앱 body를 그대로 통과시키므로 `sentenceId`와 같은 상황이다 —
-  FastAPI가 camelCase로 받아야 한다
+- 요청 필드는 **camelCase로 나간다**(`childName`, `partnerLine` …). 게이트웨이가 앱 body를
+  가공 없이 통과시키기 때문이다.
+  ⚠️ **실측 결과 현재 FastAPI는 이걸 못 받는다** — camelCase는 `422`(`child_name` 필드 없음),
+  snake_case는 `200`. 연동 문서 표 9번으로 camelCase 수용을 요청해 둔 상태이고,
+  응하지 않으면 게이트웨이가 변환해야 한다
 
 > **아직 배포하지 않았다.** `dev`에는 있고, `main` 머지 시 CD가 배포한다.
 

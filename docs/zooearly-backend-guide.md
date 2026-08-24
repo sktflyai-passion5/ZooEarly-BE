@@ -864,7 +864,51 @@ curl -i -X OPTIONS https://<FQDN>/api/v1/ai/tts   -H "Origin: https://stzooearly
 
 > 허용하지 않은 오리진은 계속 403으로 막힌다. 와일드카드(`*`)를 쓰지 않기 때문에 아무 사이트나 이 API를 부를 수 없다.
 
-### 5.12 FastAPI가 배포되면 연결하기
+### 5.12 FastAPI 연결
+
+**현재 FastAPI 주소** (2026-08-24 기준):
+
+```
+https://zooearly-ai.icypebble-8de5ca89.japaneast.azurecontainerapps.io
+```
+
+게이트웨이에 이미 적용해뒀다. 인증 키는 아직 필요 없다 — FastAPI가 `API_KEY`를 비워둔 상태다.
+
+```bash
+az containerapp update -n zooearly-gateway -g zooearly-rg   --set-env-vars INFERENCE_BASE_URL="https://zooearly-ai.icypebble-8de5ca89.japaneast.azurecontainerapps.io"
+```
+
+> **이 주소를 여기 적어두는 이유**: 연동이 안 될 때 FastAPI를 직접 찔러봐야 원인이 게이트웨이인지
+> FastAPI인지 가려진다. 주소를 아무 데도 안 적어두면 그 확인을 아무도 혼자 못 한다.
+
+**FastAPI만 직접 호출해보기** (게이트웨이 우회):
+
+```bash
+FA=https://zooearly-ai.icypebble-8de5ca89.japaneast.azurecontainerapps.io
+curl $FA/health                                   # 200이면 살아있다
+curl $FA/internal/v1/feedback/sentences           # 문장 10개
+```
+
+### 5.12-1 아직 안 붙는다 — 필드명이 안 맞는다 ⚠️
+
+2026-08-24 실측. **연결은 됐지만 대부분 422다.**
+
+| 엔드포인트 | 결과 |
+|---|---|
+| `GET /feedback/sentences` | **200** (단 응답이 봉투 없는 배열 + snake_case) |
+| `POST /speech/transcribe` | 422 — `audio`→`audio_file`, `language`→`language_code` |
+| `POST /speech/synthesize` | 422 — `language`→`language_code`. 응답도 바이너리 MP3 |
+| `POST /feedback/speaking` | 422 — `audio`→`audio_file`, `sentenceId`→`sentence_id` |
+| `POST /story/generate` | 422 — `childName`→`child_name` 등. **snake_case로 보내면 200** |
+| `POST /feedback/expression` | 502 — 경로 자체가 없음 |
+
+**응답 형식은 FastAPI만 고칠 수 있다.** 게이트웨이는 body를 파싱하지 않으므로(§0.1)
+봉투·필드명·TTS 형식을 손댈 방법이 없다. 요청 필드명은 어느 쪽이 맞춰도 된다 —
+자세한 역할 나누기는 [zooearly-gateway-to-fastapi.md](zooearly-gateway-to-fastapi.md) §1-1 참고.
+
+### 5.12-2 연결이 끝나면
+
+
 
 지금은 `INFERENCE_BASE_URL`이 임시값이라 **추론이 필요한 요청은 502가 난다.**
 게이트웨이 자체 검증(400)은 정상 동작하므로 앱 화면 배선은 지금도 확인할 수 있다.
