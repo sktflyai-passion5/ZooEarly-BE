@@ -15,6 +15,12 @@ spring:
       max-file-size: 12MB
       max-request-size: 15MB
 
+# 브라우저에서 앱을 띄울 때(Expo web)만 쓴다. 배포 대상인 RN 네이티브 앱은 CORS가 없다.
+# 비워두면 CORS를 아예 안 켠다 — 배포 기본값이 이것이다.
+# 예) CORS_ALLOWED_ORIGINS=http://localhost:8081
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:}
+
 inference:
   base-url: ${INFERENCE_BASE_URL:http://localhost:8000}  # FastAPI 주소. 배포 시 환경변수로 주입
 
