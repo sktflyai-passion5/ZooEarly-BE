@@ -51,7 +51,7 @@ class InferenceClientTest {
         AtomicReference<String> captured = new AtomicReference<>();
         String baseUrl = startServerCapturing(captured);
 
-        InferenceClient client = new InferenceClient(baseUrl, "secret-abc-123", 3, 5, 5, 5);
+        InferenceClient client = new InferenceClient(baseUrl, "secret-abc-123", 3, 5, 5, 5, 5);
         client.postJson("/tts", "{}");
 
         assertThat(captured.get()).isEqualTo("secret-abc-123");
@@ -63,7 +63,7 @@ class InferenceClientTest {
         AtomicReference<String> captured = new AtomicReference<>();
         String baseUrl = startServerCapturing(captured);
 
-        InferenceClient client = new InferenceClient(baseUrl, "", 3, 5, 5, 5);
+        InferenceClient client = new InferenceClient(baseUrl, "", 3, 5, 5, 5, 5);
         client.postJson("/tts", "{}");
 
         assertThat(captured.get()).isNull();
@@ -75,7 +75,7 @@ class InferenceClientTest {
         AtomicReference<String> captured = new AtomicReference<>();
         String baseUrl = startServerCapturing(captured);
 
-        InferenceClient client = new InferenceClient(baseUrl, "secret-abc-123", 3, 5, 5, 5);
+        InferenceClient client = new InferenceClient(baseUrl, "secret-abc-123", 3, 5, 5, 5, 5);
         client.get("/sentences");
 
         assertThat(captured.get()).isEqualTo("secret-abc-123");

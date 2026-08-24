@@ -108,7 +108,7 @@ public class AiRelayService {
         if (language != null) {
             parts.add("language", language);
         }
-        return inferenceClient.postMultipart(sttPath, parts);
+        return inferenceClient.postMultipartStt(sttPath, parts);
     }
 
     // ── tts ───────────────────────────────────────────────

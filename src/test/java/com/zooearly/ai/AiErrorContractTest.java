@@ -110,7 +110,7 @@ class AiErrorContractTest {
     @DisplayName("FastAPI의 422 STT_FAILED는 body를 그대로 통과시킨다 — §1.3")
     void passthroughKeepsFastApiBody() throws Exception {
         String body = "{\"success\":false,\"error\":{\"code\":\"STT_FAILED\",\"message\":\"엔진 오류\",\"field\":null}}";
-        given(inferenceClient.postMultipart(anyString(), any()))
+        given(inferenceClient.postMultipartStt(anyString(), any()))
                 .willThrow(new InferencePassthroughException(422, body));
 
         mvc.perform(multipart(STT).file(audio("a.m4a", 100)))
@@ -502,15 +502,28 @@ class AiErrorContractTest {
     }
 
     @Test
+    @DisplayName("stt는 전용 타임아웃 클라이언트를 쓴다 — 기본(15초)으로 나가면 504가 난다")
+    void sttUsesDedicatedTimeoutClient() throws Exception {
+        given(inferenceClient.postMultipartStt(anyString(), any())).willReturn("{\"success\":true}");
+
+        mvc.perform(multipart(STT).file(audio("a.m4a", 100)))
+                .andExpect(status().isOk());
+
+        // 실측상 FastAPI STT가 35~70초 걸린다. 기본 클라이언트로 나가면 무조건 타임아웃이다
+        verify(inferenceClient).postMultipartStt(anyString(), any());
+        verify(inferenceClient, org.mockito.Mockito.never()).postMultipart(anyString(), any());
+    }
+
+    @Test
     @DisplayName("FastAPI 경로는 설정에서 주입된다 — 앱 계약과 무관하게 바뀔 수 있다")
     void relayUsesConfiguredFastApiPath() throws Exception {
-        given(inferenceClient.postMultipart(anyString(), any())).willReturn("{\"success\":true}");
+        given(inferenceClient.postMultipartStt(anyString(), any())).willReturn("{\"success\":true}");
 
         mvc.perform(multipart(STT).file(audio("a.m4a", 100)))
                 .andExpect(status().isOk());
 
         // 앱은 /api/v1/ai/stt 로 부르지만, FastAPI 로는 설정된 경로로 나간다
-        verify(inferenceClient).postMultipart(eq(sttPath), any());
+        verify(inferenceClient).postMultipartStt(eq(sttPath), any());
     }
 
     // ── 정상 경로 ─────────────────────────────────────────────

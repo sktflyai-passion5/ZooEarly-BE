@@ -59,7 +59,16 @@ inference:
     story: ${INFERENCE_PATH_STORY:/internal/v1/story/generate}
   timeout:
     connect-seconds: 3         # 명세 §0.4
-    read-seconds: 15           # stt / tts / feedback
+    read-seconds: 15           # tts / feedback / pronunciation
+
+    # STT만 따로 뺀 이유 — 실측 때문이다.
+    # 0.5초짜리 무음 wav 하나에 35~70초가 걸린다 (2026-08-24, 3회: 70/61/35초).
+    # 15초로 두면 앱에 무조건 504가 나가서 녹음 기능을 아예 못 써본다.
+    #
+    # 이 값은 "정상"이라서 90초가 아니라, 지금 FastAPI가 느려서 임시로 열어둔 것이다.
+    # 아이가 말하고 70초를 기다리는 화면은 실제로 못 쓴다 —
+    # FastAPI 쪽 STT 속도가 개선되면 반드시 다시 줄인다.
+    stt-read-seconds: ${INFERENCE_TIMEOUT_STT:90}
     chat-read-seconds: 30      # chat (STT+LLM+TTS 3단)
 
     # 동화는 4개 장면을 한 번에 생성한다 — 장면마다 소제목·전환구·인용·내레이션이라

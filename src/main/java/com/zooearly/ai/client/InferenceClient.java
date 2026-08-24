@@ -12,7 +12,8 @@ import org.springframework.web.client.RestClientResponseException;
 
 /**
  * FastAPI 추론 서버 호출 전담. 타임아웃은 명세 §0.4.
- * - 기본 클라이언트: connect 3s / read 15s  (stt, tts, feedback, pronunciation)
+ * - 기본 클라이언트: connect 3s / read 15s  (tts, feedback, pronunciation)
+ * - stt  클라이언트: connect 3s / read 90s (FastAPI STT가 35~70초 걸린다 — 임시값)
  * - chat 클라이언트: connect 3s / read 30s  (STT+LLM+TTS 3단이라 길다)
  * - story 클라이언트: connect 3s / read 60s (4개 장면을 한 번에 생성해 가장 오래 걸린다)
  *
@@ -28,6 +29,7 @@ public class InferenceClient {
 
     private final RestClient defaultClient;
     private final RestClient chatClient;
+    private final RestClient sttClient;
     private final RestClient storyClient;
 
     public InferenceClient(
@@ -36,9 +38,11 @@ public class InferenceClient {
             @Value("${inference.timeout.connect-seconds}") long connectSeconds,
             @Value("${inference.timeout.read-seconds}") long readSeconds,
             @Value("${inference.timeout.chat-read-seconds}") long chatReadSeconds,
+            @Value("${inference.timeout.stt-read-seconds}") long sttReadSeconds,
             @Value("${inference.timeout.story-read-seconds}") long storyReadSeconds) {
         this.defaultClient = build(baseUrl, apiKey, connectSeconds, readSeconds);
         this.chatClient = build(baseUrl, apiKey, connectSeconds, chatReadSeconds);
+        this.sttClient = build(baseUrl, apiKey, connectSeconds, sttReadSeconds);
         this.storyClient = build(baseUrl, apiKey, connectSeconds, storyReadSeconds);
     }
 
@@ -72,7 +76,12 @@ public class InferenceClient {
         return exchange(storyClient, path, MediaType.APPLICATION_JSON, rawJsonBody);
     }
 
-    /** stt — multipart 전달 */
+    /** stt — multipart 전달, 90s 타임아웃 (FastAPI STT가 느리다) */
+    public String postMultipartStt(String path, MultiValueMap<String, Object> parts) {
+        return exchange(sttClient, path, MediaType.MULTIPART_FORM_DATA, parts);
+    }
+
+    /** pronunciation — multipart 전달 */
     public String postMultipart(String path, MultiValueMap<String, Object> parts) {
         return exchange(defaultClient, path, MediaType.MULTIPART_FORM_DATA, parts);
     }
