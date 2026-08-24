@@ -1,7 +1,7 @@
 # 쥬얼리 (ZooEarly) — 백엔드 개발 가이드
 
 > **v1.0 · 2026-08-21**
-> GitHub 세팅 → VS Code 개발 환경 → 개발 흐름 → AWS EC2 배포
+> GitHub 세팅 → VS Code 개발 환경 → 개발 흐름 → Azure App Service 배포
 > 대상: Spring Boot API Gateway 담당자
 
 ---
@@ -26,7 +26,7 @@ DB 없음, 로그인 없음, 비즈니스 로직 없음. 이게 이 프로젝트
 | 2 | GitHub 레포 생성 + 초기 세팅 | 30분 |
 | 3 | 로컬에서 실행·테스트 | 30분 |
 | 4 | 기능 개발 (브랜치 → PR → 머지) | 반복 |
-| 5 | AWS EC2 배포 | 2~3시간 (첫 배포) |
+| 5 | Azure App Service 배포 | 1~2시간 (첫 배포) |
 
 ### 0.3 미리 알아둘 용어
 
@@ -36,8 +36,8 @@ DB 없음, 로그인 없음, 비즈니스 로직 없음. 이게 이 프로젝트
 | **Gradle** | 라이브러리를 자동으로 받아오고 빌드해주는 도구. `build.gradle`이 설정 파일 |
 | **jar 파일** | 프로젝트 전체를 하나로 압축한 실행 파일. 배포할 때 이것만 서버에 올린다 |
 | **빌드(build)** | 소스코드 → 실행 가능한 jar로 변환하는 것 |
-| **EC2** | AWS가 빌려주는 리눅스 컴퓨터 한 대. 여기에 jar를 올려서 24시간 돌린다 |
-| **SSH** | 내 컴퓨터에서 원격 서버에 접속하는 방법. 터미널로 조종한다 |
+| **App Service** | Azure가 관리해주는 웹 앱 실행 환경. jar만 올리면 서버 관리 없이 24시간 돌아간다 |
+| **az CLI** | 터미널에서 Azure 리소스를 만들고 배포하는 명령어 도구 |
 | **브랜치** | 코드의 평행세계. 작업하다 망해도 원본은 안전하다 |
 
 ---
@@ -305,7 +305,7 @@ cd ZooEarly-BE
 | `zooearly-ai-api-spec.md` | 사람용 명세서 | 앱이 지켜야 할 규칙이 여기 있다 (history 관리, 에러 폴백, 캐싱 등) |
 | `zooearly-ai-openapi.yaml` | Swagger 명세 | editor.swagger.io에 붙여넣으면 UI로 볼 수 있다 |
 | `zooearly-ai-api.types.ts` | TypeScript 타입 | 그대로 import해서 쓰면 필드 오타가 컴파일 에러로 잡힌다 |
-| (말로) 서버 주소 | 개발 중엔 `http://localhost:8080`, 배포 후엔 EC2 주소 | 요청 보낼 곳 |
+| (말로) 서버 주소 | 개발 중엔 `http://localhost:8080`, 배포 후엔 `https://zooearly-gateway.azurewebsites.net` | 요청 보낼 곳 |
 | (말로) 연동 가능 시점 | 언제부터 실제 호출 테스트가 되는지 | 프론트가 mock으로 갈지 실서버로 갈지 판단 |
 
 ---
@@ -470,197 +470,125 @@ src/main/java/com/zooearly/
 
 ---
 
-## 5. AWS EC2 배포
+## 5. Azure App Service 배포
 
-### 5.1 먼저 알아야 할 것 — 프리티어가 바뀌었다 ⚠️
+### 5.1 왜 Azure인가, 왜 App Service인가
 
-**2025년 7월 15일부터 AWS 프리티어 정책이 바뀌었다.** 인터넷의 옛날 글을 그대로 따라하면 예상 못 한 요금이 나올 수 있다.
+- **FastAPI/모델 쪽이 이미 Azure로 배포한다** (Container Apps, `koreacentral` 리전 — `DEPLOY_azure.md`). 게이트웨이도 같은 클라우드·같은 리전에 두면 두 서버 사이 지연이 줄고, 방화벽·네트워크 설정을 따로 두 클라우드에서 익힐 필요가 없다.
+- FastAPI는 700MB대 모델을 메모리에 올려야 해서 Container Apps(Docker, 2vCPU/4GiB)가 필요하지만, **이 게이트웨이는 모델이 없는 얇은 릴레이**다. 그만큼 무거운 선택지는 필요 없다 — **App Service(Linux, Java 17 내장 런타임)** 로 충분하다. Dockerfile을 만들 필요도 없다. jar 하나만 올리면 된다.
+- App Service는 기본으로 `https://<이름>.azurewebsites.net` HTTPS 주소를 준다. EC2 방식이었다면 인증서를 직접 붙이기 전까지 앱에 cleartext 예외(`usesCleartextTraffic`, `NSAllowsLocalNetworking`)를 걸어둬야 했는데, Azure는 처음부터 https라 배포 시점엔 그 설정을 뺄 수 있다.
 
-| | 2025년 7월 15일 **이전** 계정 | **이후** 신규 계정 |
-|---|---|---|
-| EC2 무료 | t2.micro 월 750시간 × 12개월 | **없음** |
-| 대신 제공 | — | 가입 시 **$100 크레딧** + 온보딩 수행 시 최대 $100 추가 |
-| 기간 | 12개월 | **6개월 또는 크레딧 소진 시점 중 먼저 오는 쪽** |
+### 5.2 가격 — 요금 사고 막는 습관
 
-즉 신규 계정은 EC2를 쓸 때마다 크레딧이 차감된다. **$200이면 작은 인스턴스를 몇 달 돌리기에는 충분하지만, 무한정 공짜가 아니다.**
+| | 내용 |
+|---|---|
+| 무료 체험 | 신규 계정 **$200 크레딧**(30일) — 데모 준비 기간엔 이걸로 충분 |
+| 상시 운영 | App Service **Basic B1**(1 vCore/1.75GB) 기준 월 대략 $13 내외. 정확한 값은 [Azure 가격 계산기](https://azure.microsoft.com/pricing/calculator/)에서 리전(`Korea Central`)·SKU로 직접 확인한다 |
+| 테스트용 무료 티어 | **F1(Free)** — 계속 무료지만 하루 CPU 60분 제한이 있고 5.4의 Always On을 못 켠다. 개발 중 연결 확인용으로는 충분, **발표 당일엔 B1 이상 권장** |
 
-**요금 사고를 막는 3가지 습관**
+- Cost Management → Budgets에서 월 예산 알림을 걸어둔다 (AWS Budgets와 같은 개념).
+- 안 쓸 때는 `az webapp stop`으로 중지한다. 프로젝트가 완전히 끝나면 리소스 그룹째 삭제해서 요금을 완전히 끊는다.
 
-1. **Billing 알림을 먼저 켠다.** AWS 콘솔 → 우측 상단 계정명 → `Billing and Cost Management` → `Budgets` → 월 $5 정도로 알림 설정. 이걸 안 하면 다음 달 카드값을 보고 알게 된다.
-2. **안 쓰는 인스턴스는 중지(Stop)한다.** 단, 중지해도 디스크(EBS) 요금은 계속 나간다. 프로젝트가 끝나면 **종료(Terminate)** 한다.
-3. **Elastic IP를 할당했으면 반드시 인스턴스에 연결한다.** 할당만 하고 안 붙여두면 월 $3.6 정도가 그냥 나간다.
+### 5.3 리소스 만들기 (CLI)
 
-### 5.2 EC2 인스턴스 만들기
-
-1. AWS 콘솔 → 검색창에 `EC2` → **인스턴스 시작(Launch instances)**
-2. 설정값:
-
-| 항목 | 값 | 설명 |
-|---|---|---|
-| 이름 | `zooearly-gateway` | |
-| AMI | **Ubuntu Server 24.04 LTS** | 리눅스 종류. 자료가 가장 많다 |
-| 인스턴스 유형 | `t3.micro` | 가장 작고 싼 것. 이 서버는 릴레이라 이걸로 충분하다 |
-| 키 페어 | **새로 생성** → 이름 입력 → `.pem` 다운로드 | **이 파일을 잃어버리면 서버에 접속할 수 없다.** 안전한 곳에 보관 |
-| 네트워크 설정 | 아래 5.3 참고 | |
-| 스토리지 | 8~16 GiB | 기본값으로 충분 |
-
-3. **인스턴스 시작** 클릭
-
-### 5.3 방화벽(보안 그룹) 설정
-
-**이 설정이 잘못되면 접속이 안 되거나, 반대로 서버가 공격에 노출된다.**
-
-네트워크 설정에서 `보안 그룹 규칙 추가`로 아래 3개를 만든다.
-
-| 유형 | 포트 | 소스 | 용도 |
-|---|---|---|---|
-| SSH | 22 | **내 IP** | 내가 서버에 접속 |
-| 사용자 지정 TCP | 8080 | 위치 무관 (0.0.0.0/0) | 앱이 API 호출 |
-| HTTP | 80 | 위치 무관 (0.0.0.0/0) | (나중에 도메인 붙일 때) |
-
-> **SSH(22번)의 소스는 반드시 "내 IP"로 한다.** 0.0.0.0/0으로 열면 전 세계에서 로그인 시도가 들어온다. 카페 등에서 IP가 바뀌면 그때 규칙을 수정하면 된다.
-
-### 5.4 서버 접속
-
-인스턴스 목록에서 **퍼블릭 IPv4 주소**를 복사한다. (예: `13.125.xxx.xxx`)
+[Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)를 설치하고 `az login` 후 진행한다.
 
 ```bash
-# .pem 파일이 있는 폴더에서
-chmod 400 zooearly-key.pem          # 최초 1회. 권한이 열려있으면 접속 거부됨
+# 리소스 그룹 — FastAPI와 같은 리전에 둔다 (DEPLOY_azure.md와 맞춤)
+az group create --name zooearly-rg --location koreacentral
 
-ssh -i zooearly-key.pem ubuntu@13.125.xxx.xxx
+# App Service Plan — Basic B1, Linux
+az appservice plan create \
+  --name zooearly-plan \
+  --resource-group zooearly-rg \
+  --location koreacentral \
+  --sku B1 \
+  --is-linux
+
+# Web App — Java 17
+az webapp create \
+  --name zooearly-gateway \
+  --resource-group zooearly-rg \
+  --plan zooearly-plan \
+  --runtime "JAVA:17-java17"
 ```
 
-처음 접속하면 `Are you sure you want to continue connecting?` 이 뜨는데 `yes` 입력.
+`zooearly-gateway`는 Azure 전역에서 유일한 이름이어야 한다 (도메인의 일부라서). 이미 쓰이고 있으면 `zooearly-gateway-<팀명>`처럼 바꾼다. 주소는 `https://<이름>.azurewebsites.net`이 된다.
 
-> **Windows는** PowerShell에서 같은 명령이 동작한다. `chmod`가 없다면 파일 우클릭 → 속성 → 보안에서 본인 외 사용자 권한을 제거한다.
+### 5.4 환경변수 설정
 
-### 5.5 서버에 자바 설치
-
-접속된 상태(프롬프트가 `ubuntu@ip-...`)에서:
+EC2에서 `export`나 systemd `Environment=`로 넣던 것을 **App Settings**로 넣는다. **비밀값이 실제로 들어가는 유일한 곳이다 — `application.yml`이나 코드에는 절대 넣지 않는다** (CLAUDE.md 비밀값 규칙).
 
 ```bash
-sudo apt update
-sudo apt install -y openjdk-17-jre-headless
-java -version    # openjdk version "17..." 확인
+az webapp config appsettings set \
+  --name zooearly-gateway \
+  --resource-group zooearly-rg \
+  --settings \
+    INFERENCE_BASE_URL="https://<FastAPI 주소>" \
+    INFERENCE_API_KEY="<FastAPI가 발급한 키>"
 ```
 
-> `jre-headless`는 **실행 전용**이라 용량이 작다. 서버에서는 컴파일을 안 하므로 이걸로 충분하다. (빌드는 내 컴퓨터에서 한다)
+`INFERENCE_API_KEY`는 FastAPI가 `X-API-Key` 헤더로 인증을 검사하기 때문에 필요하다 (`DEPLOY_azure.md` §4, [zooearly-gateway-to-fastapi.md](zooearly-gateway-to-fastapi.md) 참고). FastAPI 쪽 경로를 바꿨다면 `INFERENCE_PATH_*` 값들도 같이 넣는다 (기본값은 `application.yml` 참고).
 
-### 5.6 jar 만들어서 올리기
+Always On 켜기 (B1 이상에서만 가능 — 요청이 없어도 프로세스를 안 내려서, 한동안 조용하다가 들어온 첫 요청이 느려지는 걸 막는다):
 
-**내 컴퓨터** 터미널로 돌아와서:
+```bash
+az webapp config set --name zooearly-gateway --resource-group zooearly-rg --always-on true
+```
+
+### 5.5 jar 빌드 & 배포
+
+서버에 자바를 따로 설치할 필요가 없다 — App Service의 Java 17 런타임이 이미 올라가 있다. **내 컴퓨터에서 빌드한 jar를 그대로 올리기만 하면 된다.**
 
 ```cmd
 REM ① 빌드 — build\libs\ 에 jar가 생긴다  (Mac/Linux는 ./gradlew clean build)
 gradlew.bat clean build
 
-REM ② 생성 확인
-dir build\libs
-REM zooearly-gateway-0.0.1-SNAPSHOT.jar
-
-# ③ 서버로 전송 (scp = ssh로 파일 복사)
-scp -i zooearly-key.pem \
-  build/libs/zooearly-gateway-0.0.1-SNAPSHOT.jar \
-  ubuntu@13.125.xxx.xxx:~/app.jar
+REM ② 배포
+az webapp deploy ^
+  --name zooearly-gateway ^
+  --resource-group zooearly-rg ^
+  --src-path build\libs\zooearly-gateway-0.0.1-SNAPSHOT.jar ^
+  --type jar
 ```
 
-### 5.7 실행
-
-**다시 서버에 접속해서:**
+배포 로그로 기동 확인:
 
 ```bash
-ssh -i zooearly-key.pem ubuntu@13.125.xxx.xxx
-
-# FastAPI 주소를 알려주고 실행 (같은 서버에 있다면 localhost:8000)
-export INFERENCE_BASE_URL=http://FastAPI주소:8000
-java -jar app.jar
+az webapp log tail --name zooearly-gateway --resource-group zooearly-rg
 ```
 
-콘솔에 `Started ZooEarlyApplication`이 뜨면 성공이다.
+`Started ZooEarlyApplication`이 보이면 성공이다.
 
-**내 컴퓨터에서 확인:**
+### 5.6 확인
 
 ```bash
-curl -X POST http://13.125.xxx.xxx:8080/api/v1/ai/tts \
+curl -X POST https://zooearly-gateway.azurewebsites.net/api/v1/ai/tts \
   -H "Content-Type: application/json" -d '{}'
 ```
 
-400 에러가 명세 포맷으로 오면 **배포 성공이다.**
+400 에러가 명세 포맷으로 오면 **배포 성공이다.** SSH 접속이나 방화벽(보안 그룹) 설정이 따로 필요 없다 — EC2 5.3~5.4에 해당하는 작업 전체가 사라졌다.
 
-### 5.8 터미널을 꺼도 계속 돌게 하기
+### 5.7 계속 돌아가게 하기
 
-위 방식은 **SSH 연결을 끊으면 서버도 같이 죽는다.** 실제 운영하려면 백그라운드로 돌려야 한다.
+EC2는 SSH 연결이 끊기면 프로세스도 같이 죽어서 nohup이나 systemd 유닛이 필요했다. **App Service는 그 개념 자체가 없다** — `az webapp deploy`로 올린 순간부터 관리형 프로세스로 계속 실행되고, 죽으면 플랫폼이 자동으로 재시작한다. 5.4의 Always On은 "죽었을 때 재시작"이 아니라 "유휴 상태에서도 안 내려가게" 하는 별개의 설정이다.
 
-**방법 A — nohup (간단, 데모용으로 충분)**
+### 5.8 코드를 수정했을 때 (재배포)
 
-```bash
-nohup java -jar app.jar > app.log 2>&1 &
-```
-
-- 실행 확인: `ps -ef | grep app.jar`
-- 로그 보기: `tail -f app.log` (`Ctrl+C`로 빠져나옴)
-- 종료: `pkill -f app.jar`
-
-**방법 B — systemd (서버 재부팅 후에도 자동 실행)**
-
-```bash
-sudo nano /etc/systemd/system/zooearly.service
-```
-
-아래 내용을 붙여넣는다. (`nano`에서 저장은 `Ctrl+O` → `Enter`, 종료는 `Ctrl+X`)
-
-```ini
-[Unit]
-Description=ZooEarly Gateway
-After=network.target
-
-[Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu
-Environment="INFERENCE_BASE_URL=http://FastAPI주소:8000"
-ExecStart=/usr/bin/java -jar /home/ubuntu/app.jar
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable zooearly     # 재부팅 시 자동 시작
-sudo systemctl start zooearly      # 지금 시작
-
-sudo systemctl status zooearly     # 상태 확인
-sudo journalctl -u zooearly -f     # 실시간 로그
-```
-
-> **`Restart=always`가 핵심이다.** 서버가 어떤 이유로 죽어도 5초 뒤 자동으로 되살아난다. 발표 도중 서버가 죽는 사고를 막아준다.
-
-### 5.9 코드를 수정했을 때 (재배포)
-
-```bash
-# 내 컴퓨터
+```cmd
 gradlew.bat clean build
-scp -i zooearly-key.pem build\libs\zooearly-gateway-0.0.1-SNAPSHOT.jar ubuntu@13.125.xxx.xxx:~/app.jar
-
-# 서버
-ssh -i zooearly-key.pem ubuntu@13.125.xxx.xxx
-sudo systemctl restart zooearly     # systemd를 쓸 때
-# 또는
-pkill -f app.jar && nohup java -jar app.jar > app.log 2>&1 &   # nohup을 쓸 때
+az webapp deploy --name zooearly-gateway --resource-group zooearly-rg --src-path build\libs\zooearly-gateway-0.0.1-SNAPSHOT.jar --type jar
 ```
 
-### 5.10 프론트에 알려줄 주소
+EC2의 "빌드 → scp로 전송 → SSH 접속 → systemctl restart" 네 단계가 빌드 한 번 + `az webapp deploy` 한 줄로 끝난다.
 
-배포가 끝나면 프론트 담당자에게 주소를 알려준다.
+### 5.9 프론트에 알려줄 주소
 
 ```
-http://13.125.xxx.xxx:8080
+https://zooearly-gateway.azurewebsites.net
 ```
 
-> **인스턴스를 중지했다 켜면 IP가 바뀐다.** 매번 알려주기 번거로우면 **탄력적 IP(Elastic IP)** 를 할당해서 인스턴스에 연결하면 고정된다. 단, 5.1에서 경고했듯 **인스턴스에 연결하지 않은 채로 두면 요금이 나간다.**
+EC2의 퍼블릭 IP는 인스턴스를 껐다 켜면 바뀌어서 Elastic IP를 따로 고정해야 했다. App Service는 **리소스를 지우지 않는 한 이 도메인이 그대로 고정**이라 그 작업이 필요 없다.
 
 ---
 
@@ -669,13 +597,14 @@ http://13.125.xxx.xxx:8080
 발표·데모 전에 확인한다.
 
 - [ ] `./gradlew build` 가 로컬에서 통과한다
-- [ ] EC2에서 `sudo systemctl status zooearly` 가 `active (running)` 이다
-- [ ] 외부에서 `curl`로 API가 응답한다 (400/502라도 응답하면 OK)
+- [ ] `az webapp deploy`로 올린 뒤 `az webapp log tail`에 `Started ZooEarlyApplication`이 찍혔다
+- [ ] 외부에서 `curl https://zooearly-gateway.azurewebsites.net/...`로 API가 응답한다 (400/502라도 응답하면 OK)
 - [ ] FastAPI가 떠 있고, `INFERENCE_BASE_URL`이 그 주소를 가리킨다
+- [ ] `INFERENCE_API_KEY`가 App Settings에 설정되어 있다 (없으면 FastAPI가 401을 준다)
 - [ ] 실제 요청 하나가 200으로 끝까지 통한다 (앱 → 게이트웨이 → FastAPI → OpenAI)
-- [ ] AWS Budgets 알림이 설정되어 있다
-- [ ] 프론트 담당자가 서버 주소를 알고 있다
-- [ ] `.pem` 키 파일이 안전한 곳에 백업되어 있다
+- [ ] Azure Cost Management → Budgets 알림이 설정되어 있다
+- [ ] 프론트 담당자가 서버 주소(`https://zooearly-gateway.azurewebsites.net`)를 알고 있다
+- [ ] Always On이 켜져 있다 (B1 이상, 발표 중 첫 요청 지연 방지)
 - [ ] **API 키가 GitHub에 올라가지 않았다** (`git log -p | grep -i "key\|secret"` 로 확인)
 
 ---
@@ -684,6 +613,7 @@ http://13.125.xxx.xxx:8080
 
 - [Spring Boot in Visual Studio Code](https://code.visualstudio.com/docs/java/java-spring-boot) — VS Code 공식 Spring Boot 가이드
 - [Java extensions for Visual Studio Code](https://code.visualstudio.com/docs/java/extensions) — 확장팩 목록
-- [AWS Free Tier](https://aws.amazon.com/free/) — 현재 프리티어 조건
-- [AWS 프리티어 개편 공지 (2025-07)](https://aws.amazon.com/about-aws/whats-new/2025/07/aws-free-tier-credits-month-free-plan/) — 크레딧 방식 전환 공식 발표
+- [Deploy a Java app to Azure App Service](https://learn.microsoft.com/azure/app-service/quickstart-java) — App Service Java 배포 공식 가이드
+- [Azure CLI 설치](https://learn.microsoft.com/cli/azure/install-azure-cli) — `az` 명령 설치
+- [Azure 가격 계산기](https://azure.microsoft.com/pricing/calculator/) — 최신 요금 확인
 - [Eclipse Temurin JDK 17](https://adoptium.net/temurin/releases/?version=17) — JDK 다운로드
