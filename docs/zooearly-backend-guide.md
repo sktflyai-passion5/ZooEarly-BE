@@ -486,6 +486,7 @@ src/main/java/com/zooearly/
 |---|---|
 | 무료 체험 | 신규 계정 **$200 크레딧**(30일) |
 | Container Apps (0.5vCPU/1Gi, min-replicas 1) | 월 1~2만원 |
+| **Azure for Students** | **$100 크레딧 · 신용카드 불필요.** 위 비용이 여기서 차감된다 |
 | Azure Container Registry **Basic** | 월 약 $5 |
 
 - Cost Management → **Budgets**에서 월 예산 알림을 먼저 걸어둔다. 이걸 안 하면 다음 달 카드값을 보고 알게 된다.
@@ -596,6 +597,23 @@ docker run --rm -p 8080:8080 \
 
 [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli)를 설치하고 `az login` 후 진행한다.
 
+> ### ⚠️ 학생 구독은 리전이 제한된다 — 실제로 겪은 것
+>
+> **Azure for Students는 `koreacentral`에 리소스를 만들 수 없다.** 시도하면 이렇게 막힌다.
+>
+> ```
+> (RequestDisallowedByAzure) Resource '...' was disallowed by Azure:
+> This policy maintains a set of best available regions where your
+> subscription can deploy resources.
+> ```
+>
+> 리소스 그룹은 `koreacentral`로 만들어져서 되는 줄 알았다가, 실제 리소스에서 막힌다.
+> **`japaneast`가 허용되고 한국에서 지연이 가장 적은 대안**이라 이걸 썼다.
+> 아래 명령의 리전은 전부 `japaneast` 기준이다.
+>
+> 아동 음성을 국내에서 처리하는 편이 좋지만(FastAPI 쪽 `DEPLOY_azure.md`의 논의),
+> 학생 구독으로는 선택지가 없다. 유료 구독으로 옮기면 `koreacentral`을 쓸 수 있다.
+
 ```bash
 # 확장 설치 (최초 1회)
 az extension add --name containerapp --upgrade
@@ -603,16 +621,17 @@ az provider register --namespace Microsoft.App
 az provider register --namespace Microsoft.OperationalInsights
 
 # 리소스 그룹 — FastAPI와 같은 리전에 둔다
-az group create --name zooearly-rg --location koreacentral
+az group create --name zooearly-rg --location japaneast
 
 # 컨테이너 레지스트리 (이미지 보관소). 이름은 소문자·숫자만, 전역에서 유일해야 한다
-az acr create --name zooearlyacr --resource-group zooearly-rg --sku Basic --admin-enabled true
+# 이름은 소문자·숫자만, 전역에서 유일해야 한다 (이미 쓰이면 숫자를 붙인다)
+az acr create --name zooearlyacr --resource-group zooearly-rg --sku Basic --admin-enabled true --location japaneast
 
 # Container Apps 실행 환경
 az containerapp env create \
   --name zooearly-env \
   --resource-group zooearly-rg \
-  --location koreacentral
+  --location japaneast
 ```
 
 ### 5.5 이미지 올리고 앱 만들기
@@ -645,7 +664,7 @@ az containerapp create \
 ```bash
 az containerapp show --name zooearly-gateway --resource-group zooearly-rg \
   --query properties.configuration.ingress.fqdn -o tsv
-# zooearly-gateway.xxxx.koreacentral.azurecontainerapps.io
+# zooearly-gateway.xxxx.japaneast.azurecontainerapps.io
 ```
 
 ### 5.6 비밀값 다루기 ⚠️
@@ -738,11 +757,42 @@ az containerapp update --name zooearly-gateway --resource-group zooearly-rg \
 
 ### 5.11 프론트에 알려줄 주소
 
+**현재 배포된 주소** (2026-08-24 기준):
+
 ```
-https://zooearly-gateway.xxxx.koreacentral.azurecontainerapps.io
+https://zooearly-gateway.politesmoke-47da854d.japaneast.azurecontainerapps.io/api/v1
 ```
 
-정확한 값은 5.5의 `az containerapp show`로 확인한다. **리소스를 지우지 않는 한 이 주소는 고정**이므로 한 번만 알려주면 된다.
+프론트 `.env`에 이 값을 넣는다.
+
+```env
+EXPO_PUBLIC_SERVICE_API_URL=https://zooearly-gateway.politesmoke-47da854d.japaneast.azurecontainerapps.io/api/v1
+```
+
+> **`/api/v1`까지 붙여서 준다.** 프론트 코드가 `/ai/tts` 같은 경로를 뒤에 붙이는 구조라,
+> 빼고 주면 전부 404가 난다.
+
+**리소스를 지우지 않는 한 이 주소는 고정**이므로 한 번만 알려주면 된다.
+LAN IP처럼 WiFi가 바뀔 때마다 다시 알려줄 필요가 없다 — 배포하는 이유 중 하나다.
+
+### 5.12 FastAPI가 배포되면 연결하기
+
+지금은 `INFERENCE_BASE_URL`이 임시값이라 **추론이 필요한 요청은 502가 난다.**
+게이트웨이 자체 검증(400)은 정상 동작하므로 앱 화면 배선은 지금도 확인할 수 있다.
+
+FastAPI 주소와 키가 나오면 아래 한 번으로 연결된다.
+
+```bash
+az containerapp update --name zooearly-gateway --resource-group zooearly-rg   --set-env-vars INFERENCE_BASE_URL="https://<FastAPI 주소>"                  INFERENCE_API_KEY=secretref:inference-api-key
+
+az containerapp secret set --name zooearly-gateway --resource-group zooearly-rg   --secrets inference-api-key="<FastAPI가 발급한 키>"
+```
+
+연결 후 확인:
+
+```bash
+./tools/smoke-test.sh https://zooearly-gateway.politesmoke-47da854d.japaneast.azurecontainerapps.io
+```
 
 ---
 
