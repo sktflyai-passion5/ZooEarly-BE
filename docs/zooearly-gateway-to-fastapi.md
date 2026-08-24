@@ -75,9 +75,40 @@ FastAPI 명세(`zooearly-fastapi-spec.md`)와 대조한 결과다.
 | 9 | **동화 요청 필드명** | `child_name`, `partner_line`, `child_said`, `poem_text`, `practiced_word` (snake_case) | **camelCase로 받기** — `childName`, `partnerLine`, `childSaid`, `poemText`, `practicedWord` | 게이트웨이는 앱 body를 그대로 통과시킨다. `sentenceId`와 같은 규칙이다 (§3 참고) |
 | 10 | 동화 응답 봉투 | `{title, scenes}` | `{success, data: {title, scenes}}` | 2번 규칙이 그대로 적용된다 |
 
-**요청 쪽은 이미 맞다 — 고칠 필요 없다.** `/feedback/speaking`의 `sentence_id` 필드,
-`GET /feedback/sentences`의 `sentence_id`/`category`/`text` 필드는 게이트웨이가 그대로
-쓸 수 있는 모양으로 나온다(2026-08-24 개정). 이 문서 §3·§4는 그 형태를 그대로 반영한다.
+> ### ⚠️ 2026-08-24 실측 — 위 표는 명세를 보고 쓴 것이고, **실제로 붙여보니 요청 쪽도 안 맞는다**
+>
+> 배포된 FastAPI(`zooearly-ai...azurecontainerapps.io`)에 게이트웨이를 연결해 확인한 결과다.
+> 이전 판에 "요청 쪽은 이미 맞다 — 고칠 필요 없다"고 적었는데 **틀렸다.** 명세 문장만 보고
+> 판단했고 실제 호출로 확인하지 않았다.
+>
+> | 엔드포인트 | 게이트웨이가 보내는 것 | FastAPI가 요구하는 것 | 결과 |
+> |---|---|---|---|
+> | `/speech/transcribe` | `audio`, `language` | `audio_file`, `language_code` | **422** |
+> | `/speech/synthesize` | `language` | `language_code` | **422** |
+> | `/feedback/speaking` | `audio`, `sentenceId` | `audio_file`, `sentence_id` | **422** |
+> | `/feedback/expression` | — | 경로 자체가 없음 | **502** |
+> | `/feedback/sentences` | — (GET) | — | **200** ✅ |
+>
+> 유일하게 통하는 건 문장 목록뿐이고, 그마저 응답이 봉투 없는 배열 + `snake_case`라
+> 앱이 못 읽는다.
+>
+> **누가 고칠지는 아래 "역할 나누기"를 참고한다.**
+
+### 역할 나누기 — 요청은 게이트웨이가, 응답은 FastAPI가
+
+기준은 하나다. **게이트웨이는 요청을 바꿀 수 있지만 응답은 못 바꾼다.**
+
+| | 누가 고치나 | 왜 |
+|---|---|---|
+| **요청** 필드명·값 | 게이트웨이 가능 ✅ | 어차피 검증하느라 들여다본다. 이름만 바꿔 보내면 된다 |
+| **응답** 봉투·필드명·형식 | **FastAPI만 가능** ❌ | 게이트웨이가 body를 파싱하지 않는다(§0.1). FastAPI 응답이 곧 앱이 받는 JSON이다 |
+
+**그래서 FastAPI는 응답을 반드시 고쳐야 한다.** 요청 쪽을 게이트웨이가 다 맞춰줘도
+앱은 여전히 응답을 못 읽어서 화면이 안 뜬다.
+
+**요청 쪽은 어느 쪽이 해도 된다.** 다만 FastAPI가 응답을 고치러 파일을 여는 김에
+요청 필드명도 같이 받아주는 편이 총 작업량이 적다. 부담되면 게이트웨이가 변환한다 —
+알려주면 그렇게 바꾼다.
 
 **왜 게이트웨이가 못 고치나** — CLAUDE.md의 핵심 제약이다.
 
