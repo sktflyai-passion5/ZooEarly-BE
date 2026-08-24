@@ -22,6 +22,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.mockito.ArgumentCaptor;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
@@ -48,12 +49,16 @@ class AiErrorContractTest {
     private static final String STT = "/api/v1/ai/stt";
     private static final String TTS = "/api/v1/ai/tts";
     private static final String FEEDBACK = "/api/v1/ai/feedback";
+    private static final String PRONUNCIATION = "/api/v1/ai/pronunciation";
 
     @Autowired
     private MockMvc mvc;
 
     @MockitoBean
     private InferenceClient inferenceClient;
+
+    @Value("${inference.path.stt}")
+    private String sttPath;
 
     private MockMultipartFile audio(String filename, int bytes) {
         return new MockMultipartFile("audio", filename, "audio/m4a", new byte[bytes]);
@@ -335,6 +340,59 @@ class AiErrorContractTest {
         mvc.perform(post(TTS).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"text\":\"안녕\",\"language\":\"KOREAN\"}"))
                 .andExpect(status().isOk());
+    }
+
+    // ── pronunciation (발음 채점) — 명세 §6 ────────────────────
+
+    @Test
+    @DisplayName("pronunciation: 오디오를 STT 없이 그대로 릴레이한다")
+    void pronunciationRelaysAudioDirectly() throws Exception {
+        String body = "{\"success\":true,\"data\":{\"targetWord\":\"만나서\"}}";
+        given(inferenceClient.postMultipart(anyString(), any())).willReturn(body);
+
+        mvc.perform(multipart(PRONUNCIATION).file(audio("a.m4a", 100))
+                        .param("targetSentence", "안녕! 나도 만나서 반가워"))
+                .andExpect(status().isOk())
+                .andExpect(content().json(body));
+
+        ArgumentCaptor<MultiValueMap<String, Object>> captor = ArgumentCaptor.forClass(MultiValueMap.class);
+        verify(inferenceClient).postMultipart(anyString(), captor.capture());
+        assertThat(captor.getValue().getFirst("targetSentence")).isEqualTo("안녕! 나도 만나서 반가워");
+        assertThat(captor.getValue().containsKey("audio")).isTrue();
+    }
+
+    @Test
+    @DisplayName("pronunciation: targetSentence 누락 → 400 + field=targetSentence")
+    void pronunciationRequiresTargetSentence() throws Exception {
+        mvc.perform(multipart(PRONUNCIATION).file(audio("a.m4a", 100)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.field").value("targetSentence"));
+    }
+
+    @Test
+    @DisplayName("pronunciation: 오디오 검증은 다른 엔드포인트와 동일하다")
+    void pronunciationValidatesAudio() throws Exception {
+        mvc.perform(multipart(PRONUNCIATION).file(audio("voice.mp3", 100))
+                        .param("targetSentence", "안녕"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("UNSUPPORTED_AUDIO_FORMAT"));
+
+        mvc.perform(multipart(PRONUNCIATION).file(audio("big.m4a", 10 * 1024 * 1024 + 1))
+                        .param("targetSentence", "안녕"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error.code").value("AUDIO_TOO_LARGE"));
+    }
+
+    @Test
+    @DisplayName("FastAPI 경로는 설정에서 주입된다 — 앱 계약과 무관하게 바뀔 수 있다")
+    void relayUsesConfiguredFastApiPath() throws Exception {
+        given(inferenceClient.postMultipart(anyString(), any())).willReturn("{\"success\":true}");
+
+        mvc.perform(multipart(STT).file(audio("a.m4a", 100)))
+                .andExpect(status().isOk());
+
+        // 앱은 /api/v1/ai/stt 로 부르지만, FastAPI 로는 설정된 경로로 나간다
+        verify(inferenceClient).postMultipart(eq(sttPath), any());
     }
 
     // ── 정상 경로 ─────────────────────────────────────────────

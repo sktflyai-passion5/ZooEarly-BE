@@ -1,6 +1,6 @@
 # 쥬얼리 (ZooEarly) — AI API 명세서
 
-> **v1.3.0 · 2026-08-21**
+> **v1.4.0 · 2026-08-22**
 > React Native 앱 ↔ API Gateway ↔ FastAPI Inference Server(STT / LLM / TTS → OpenAI API)
 > **이 문서가 기존 `zooearly-api-spec.md`(13개 엔드포인트)를 대체한다.** 시나리오·스토리·진행 상태는 전부 앱 로컬로 이동했고, 서버에 남는 것은 AI 추론뿐이다.
 
@@ -11,7 +11,7 @@
 | 인코딩 | UTF-8 |
 | 요청/응답 | `application/json` (음성 업로드만 `multipart/form-data`) |
 | 인증 | 없음 (프로토타입) |
-| 엔드포인트 | **4개** — `chat` / `stt` / `tts` / `feedback` |
+| 엔드포인트 | **5개** — `chat` / `stt` / `tts` / `feedback` / `pronunciation` |
 
 ---
 
@@ -19,6 +19,7 @@
 
 | 버전 | 날짜 | 변경 | 앱 영향 |
 |---|---|---|---|
+| **1.4.0** | 2026-08-22 | `pronunciation`(발음 채점) 추가 · 오디오 **최대 길이 60초 → 30초** | ⚠️ **있음** — 녹음을 30초에서 끊어야 한다. 발음 피드백 화면은 신규 구현 |
 | **1.3.0** | 2026-08-21 | `tts`의 `language`를 **필수**로 전환 | ⚠️ **있음** — `/tts`를 부르는 **모든 곳**에 넣어야 한다. 피드백 화면뿐 아니라 `DIALOGUE` 🔊·`LISTEN` 스텝의 한국어 재생도 `"KOREAN"`을 명시한다. 누락 시 `400 INVALID_PARAMETER` |
 | 1.2.0 | 2026-08-21 | `tts`에 `language` 선택 필드 추가 | — (1.3.0에서 필수로 바뀜) |
 | **1.1.0** | 2026-08-21 | `chat` / `feedback`에 `nickname` **필수** 필드 추가 | ⚠️ **있음** — 앱이 온보딩에서 받은 닉네임을 매 요청에 보내야 한다. 누락 시 `400 INVALID_PARAMETER` |
@@ -148,7 +149,7 @@ React Native App ──HTTPS/REST──▶ API Gateway ──HTTP──▶ FastA
 |---|---|
 | 포맷 | `m4a` / `wav` / `webm` |
 | 최대 용량 | 10MB |
-| 최대 길이 | 60초 |
+| 최대 길이 | **30초** |
 | multipart 필드명 | `audio` |
 
 **다운로드 (서버 → 앱, JSON 내 base64)**
@@ -426,14 +427,106 @@ Content-Type: application/json
 
 ---
 
-## 6. 엔드포인트 요약 (4개)
+## 6. POST /api/v1/ai/pronunciation — 발음 채점
 
-| # | Method | Path | 입력 | 출력 | 쓰는 화면 |
+아이가 따라 말한 녹음의 **발음**을 채점한다. `발음 피드백` 화면에서 쓴다.
+
+> **`/feedback`과 다르다.** 저쪽은 "어떤 **단어**를 골랐나"를 텍스트로 보고,
+> 이쪽은 "어떻게 **소리** 냈나"를 오디오로 본다.
+> 단어를 맞게 골랐어도 발음이 어눌할 수 있고, 그 반대도 있다.
+> 그래서 STT를 거치지 않고 **녹음을 그대로 보낸다** — 텍스트로는 발음을 알 수 없다.
+
+```http
+POST /api/v1/ai/pronunciation
+Content-Type: multipart/form-data
+```
+
+**Request**
+
+| 이름 | 타입 | 필수 | 설명 | 예시 |
+|---|---|---|---|---|
+| `audio` | `file` | ✅ | 따라 말한 녹음. §1.4 업로드 규격 | `speech.m4a` |
+| `targetSentence` | `string` | ✅ | 따라 말해야 했던 문장 | `"안녕! 나도 만나서 반가워"` |
+
+```bash
+curl -X POST https://zooearly.app/api/v1/ai/pronunciation \
+  -F "audio=@speech.m4a;type=audio/m4a" \
+  -F "targetSentence=안녕! 나도 만나서 반가워"
+```
+
+**Response `200 OK`**
+
+| 이름 | 타입 | 설명 | 예시 |
+|---|---|---|---|
+| `sentence` | `string` | 채점 대상 문장 | `"안녕! 나도 만나서 반가워"` |
+| `targetWord` | `string?` | **가장 약하게 발음한 어절.** 빈칸으로 만들 대상 | `"만나서"` |
+| `targetIndex` | `integer?` | 그 어절이 몇 번째인가 (0부터) | `2` |
+| `targetZ` | `number?` | 그 어절의 z점수. **낮을수록 약함** | `-1.82` |
+| `quizSentence` | `string?` | 빈칸이 뚫린 문장 | `"안녕! 나도 ＿＿＿ 반가워"` |
+| `words` | `object[]` | 어절별 채점 결과 | 아래 |
+| `words[].word` | `string` | 어절 | `"만나서"` |
+| `words[].z` | `number?` | z점수 | `-1.82` |
+| `words[].warn` | `boolean` | 주의 임계값 미만인가 | `true` |
+| `words[].worstPhone` | `string?` | 그 어절에서 가장 약한 음소 | `"ㄴ"` |
+
+```json
+{
+  "success": true,
+  "data": {
+    "sentence": "안녕! 나도 만나서 반가워",
+    "targetWord": "만나서",
+    "targetIndex": 2,
+    "targetZ": -1.82,
+    "quizSentence": "안녕! 나도 ＿＿＿ 반가워",
+    "words": [
+      { "word": "안녕!", "z": 0.31,  "warn": false, "worstPhone": null },
+      { "word": "나도",  "z": -0.42, "warn": false, "worstPhone": null },
+      { "word": "만나서", "z": -1.82, "warn": true,  "worstPhone": "ㄴ" },
+      { "word": "반가워", "z": -0.55, "warn": false, "worstPhone": null }
+    ]
+  }
+}
+```
+
+**설계 계약**
+
+1. **점수는 0~1이 아니라 z점수다.** 또래 규준 대비 상대값이라 **음수가 정상**이다. 0에 가까울수록 또래 평균, 낮을수록 약하다. **화면에 숫자를 표시하지 않는다** — 아이에게 점수를 보여주지 않는다.
+2. **빈칸은 `targetWord` 하나뿐이다.** `warn`이 여러 개 켜져도 빈칸은 하나만 만든다. 여러 곳을 동시에 지적하면 아이가 좌절한다.
+3. **잘함/못함 판정은 앱이 한다.** 서버는 재료(`targetZ`, `words`)만 준다 — §5 계약 3과 같은 원칙이다.
+4. **규준 집단이 우리 사용자와 다르다.** ⚠️ 아래 주의 참고.
+
+> ### ⚠️ 규준 한계 — 임계값을 정하기 전에 반드시 읽을 것
+>
+> 채점 모델의 규준은 **만 8~13세 네이티브 아동** 262명에서 산출됐다.
+> 이 앱의 사용자는 **중도입국 초등 1~2학년(만 7~8세)** 이라 연령·모어가 모두 다르다.
+>
+> 모델 제작자의 실험(`demo_l2.py`)에서, 외국어 억양이 섞이면
+> **주의 어절 비율이 7% → 59%** 로 뛰었다.
+>
+> 즉 **절대 임계값(`warn`)을 그대로 쓰면 대부분의 어절이 "발음 못함"으로 찍힌다.**
+> 아이가 계속 틀렸다는 화면만 보게 되므로 §0.4의 톤 원칙과 정면으로 어긋난다.
+>
+> **그래서 `targetWord`(상대적으로 가장 약한 어절 1개)를 쓴다.** 전체 점수가 낮게
+> 깔려도 "그중 제일 약한 곳"은 항상 하나만 나온다.
+> 잘함/못함 분기 임계값은 실제 사용자 녹음으로 조정해야 하며, 자료가 없는 동안은
+> **관대하게** 잡는다.
+
+**에러** — `400 INVALID_PARAMETER` / `UNSUPPORTED_AUDIO_FORMAT` / `AUDIO_TOO_LARGE`, `422 STT_FAILED`, `429 RATE_LIMITED`, `502 AI_SERVER_ERROR`, `504 AI_TIMEOUT`
+
+---
+
+## 엔드포인트 요약 (5개)
+
+| 절 | Method | Path | 입력 | 출력 | 쓰는 화면 |
 |---|---|---|---|---|---|
-| 2 | POST | `/api/v1/ai/chat` | 음성 + history (multipart) | 텍스트 + 음성(base64) | 자유 대화 |
-| 3 | POST | `/api/v1/ai/stt` | 음성 (multipart) | 텍스트 | SPEAK / SHADOW 스텝 |
-| 4 | POST | `/api/v1/ai/tts` | 텍스트 (JSON) | 음성(base64) | 🔊 버튼, LISTEN 스텝 |
-| 5 | POST | `/api/v1/ai/feedback` | 텍스트 2개 (JSON) | 피드백 객체 | FEEDBACK 스텝 |
+| §2 | POST | `/api/v1/ai/chat` | 음성 + history (multipart) | 텍스트 + 음성(base64) | 자유 대화 — **현재 쓰는 화면 없음** |
+| §3 | POST | `/api/v1/ai/stt` | 음성 (multipart) | 텍스트 | 말해보기, 같이 읽어볼까요 |
+| §4 | POST | `/api/v1/ai/tts` | 텍스트 (JSON) | 음성(base64) | 🔊 버튼, 시 터치 |
+| §5 | POST | `/api/v1/ai/feedback` | 텍스트 2개 (JSON) | **표현 교정** 객체 | 이렇게 말하면 더 자연스러워요 |
+| §6 | POST | `/api/v1/ai/pronunciation` | 음성 + 목표 문장 (multipart) | **발음 채점** 객체 | 발음 피드백 (빈칸 퀴즈) |
+
+> `feedback`과 `pronunciation`은 성격이 다르다. 전자는 **어떤 단어를 골랐나**(텍스트),
+> 후자는 **어떻게 소리 냈나**(오디오)를 본다. 화면도 다르다.
 
 ---
 

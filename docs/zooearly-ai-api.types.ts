@@ -106,6 +106,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ai/pronunciation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 발음 채점
+         * @description 따라 말한 녹음의 발음을 채점한다. 발음 피드백 화면(빈칸 퀴즈)에서 쓴다.
+         *
+         *     - `/ai/feedback`과 다르다. 저쪽은 "어떤 단어를 골랐나"를 텍스트로 보고,
+         *       이쪽은 "어떻게 소리 냈나"를 오디오로 본다. 그래서 STT를 거치지 않는다.
+         *     - 점수는 0~1이 아니라 z점수다. 또래 규준 대비 상대값이라 음수가 정상이며,
+         *       화면에 숫자를 표시하지 않는다.
+         *     - 빈칸은 targetWord 하나뿐이다. warn 이 여러 개 켜져도 하나만 만든다.
+         *     - 규준 집단(만 8~13세 네이티브)이 실제 사용자와 달라 임계값 조정이 필요하다.
+         *       자세한 것은 명세서 §6 주의 참고.
+         */
+        post: operations["pronunciation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -319,7 +347,7 @@ export interface operations {
                 "multipart/form-data": {
                     /**
                      * Format: binary
-                     * @description 아이의 발화. m4a/wav/webm, 최대 10MB · 60초
+                     * @description 아이의 발화. m4a/wav/webm, 최대 10MB · 30초
                      */
                     audio: string;
                     scenario: components["schemas"]["Scenario"];
@@ -386,7 +414,7 @@ export interface operations {
                 "multipart/form-data": {
                     /**
                      * Format: binary
-                     * @description m4a/wav/webm, 최대 10MB · 60초
+                     * @description m4a/wav/webm, 최대 10MB · 30초
                      */
                     audio: string;
                     /**
@@ -554,6 +582,112 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            429: components["responses"]["RateLimited"];
+            502: components["responses"]["AiServerError"];
+            504: components["responses"]["AiTimeout"];
+        };
+    };
+    pronunciation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /**
+                     * Format: binary
+                     * @description 따라 말한 녹음. m4a/wav/webm, 최대 10MB · 30초
+                     */
+                    audio: string;
+                    /**
+                     * @description 따라 말해야 했던 문장
+                     * @example 안녕! 나도 만나서 반가워
+                     */
+                    targetSentence: string;
+                };
+            };
+        };
+        responses: {
+            /** @description 채점 완료 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    /**
+                     * @example {
+                     *       "success": true,
+                     *       "data": {
+                     *         "sentence": "안녕! 나도 만나서 반가워",
+                     *         "targetWord": "만나서",
+                     *         "targetIndex": 2,
+                     *         "targetZ": -1.82,
+                     *         "quizSentence": "안녕! 나도 ＿＿＿ 반가워",
+                     *         "words": [
+                     *           {
+                     *             "word": "안녕!",
+                     *             "z": 0.31,
+                     *             "warn": false,
+                     *             "worstPhone": null
+                     *           },
+                     *           {
+                     *             "word": "나도",
+                     *             "z": -0.42,
+                     *             "warn": false,
+                     *             "worstPhone": null
+                     *           },
+                     *           {
+                     *             "word": "만나서",
+                     *             "z": -1.82,
+                     *             "warn": true,
+                     *             "worstPhone": "ㄴ"
+                     *           },
+                     *           {
+                     *             "word": "반가워",
+                     *             "z": -0.55,
+                     *             "warn": false,
+                     *             "worstPhone": null
+                     *           }
+                     *         ]
+                     *       }
+                     *     }
+                     */
+                    "application/json": components["schemas"]["SuccessEnvelope"] & {
+                        data?: {
+                            /** @description 채점 대상 문장 */
+                            sentence?: string;
+                            /**
+                             * @description 가장 약하게 발음한 어절. 빈칸으로 만들 대상
+                             * @example 만나서
+                             */
+                            targetWord?: string | null;
+                            /** @description 그 어절이 몇 번째인가 (0부터) */
+                            targetIndex?: number | null;
+                            /** @description 그 어절의 z점수. 낮을수록 약하다 */
+                            targetZ?: number | null;
+                            /**
+                             * @description 빈칸이 뚫린 문장
+                             * @example 안녕! 나도 ＿＿＿ 반가워
+                             */
+                            quizSentence?: string | null;
+                            /** @description 어절별 채점 결과 */
+                            words?: {
+                                word?: string;
+                                z?: number | null;
+                                /** @description 주의 임계값 미만인가 */
+                                warn?: boolean;
+                                worstPhone?: string | null;
+                            }[];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["SttFailed"];
             429: components["responses"]["RateLimited"];
             502: components["responses"]["AiServerError"];
             504: components["responses"]["AiTimeout"];

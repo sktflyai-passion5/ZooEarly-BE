@@ -18,19 +18,75 @@
 
 ---
 
-## 1. 엔드포인트 4개
+## 1. 엔드포인트 5개
+
+**경로는 FastAPI 쪽 이름을 그대로 쓴다.** 게이트웨이가 설정으로 맞춘다 — 바꿔달라고 하지 않는다.
 
 | 앱 → 게이트웨이 | **게이트웨이 → FastAPI** | 형식 |
 |---|---|---|
-| `POST /api/v1/ai/chat` | **`POST /ai/chat`** | multipart/form-data |
-| `POST /api/v1/ai/stt` | **`POST /ai/stt`** | multipart/form-data |
-| `POST /api/v1/ai/tts` | **`POST /ai/tts`** | application/json |
-| `POST /api/v1/ai/feedback` | **`POST /ai/feedback`** | application/json |
+| `POST /api/v1/ai/stt` | `POST /internal/v1/speech/transcribe` | multipart/form-data |
+| `POST /api/v1/ai/tts` | `POST /internal/v1/speech/synthesize` | application/json |
+| `POST /api/v1/ai/feedback` | `POST /internal/v1/feedback/expression` ⚠️ | application/json |
+| `POST /api/v1/ai/pronunciation` | `POST /internal/v1/feedback/speaking` | multipart/form-data |
+| `POST /api/v1/ai/chat` | `POST /internal/v1/chat` (미사용) | multipart/form-data |
 
-`/api/v1` 접두사가 **없다.** FastAPI는 `/ai/...`로 받으면 된다.
+⚠️ `feedback/expression`은 **아직 FastAPI에 없는 경로**다. 4번 항목 참고.
 
-Base URL은 게이트웨이의 환경변수 `INFERENCE_BASE_URL`로 주입한다 (기본 `http://localhost:8000`).
+경로가 바뀌면 게이트웨이의 `application.yml`만 고치면 된다 — 재배포도 앱 수정도 없다.
+
+```yaml
+inference:
+  path:
+    stt: /internal/v1/speech/transcribe
+    tts: /internal/v1/speech/synthesize
+    feedback: /internal/v1/feedback/expression
+    pronunciation: /internal/v1/feedback/speaking
+```
+
+Base URL은 환경변수 `INFERENCE_BASE_URL`로 주입한다 (기본 `http://localhost:8000`).
 인증 헤더는 없다 — 프로토타입 단계라 명세에 없다.
+
+---
+
+## 1-1. ★ 지금 맞춰야 할 것 — before / after
+
+FastAPI 명세(`zooearly-fastapi-spec.md`)와 대조한 결과다.
+**전부 응답 쪽이다.** 요청은 게이트웨이가 맞춘다.
+
+| # | 항목 | 지금 (FastAPI) | 바꿀 것 | 왜 |
+|---|---|---|---|---|
+| 1 | **TTS 응답** | `audio/mpeg` 바이너리 | **base64 JSON** | 게이트웨이가 body를 `String`으로 받는다. **바이너리는 깨진다** |
+| 2 | 성공 봉투 | `{"text": ...}` | `{"success": true, "data": {...}}` | 게이트웨이가 body를 그대로 앱에 넘긴다. 봉투가 없으면 앱이 못 읽는다 |
+| 3 | 에러 (422/429만) | `{"detail": "..."}` | `{"success": false, "error": {code, message, field}}` | 이 둘만 body가 앱까지 간다 |
+| 4 | 응답 필드명 | `translated_text`, `duration_sec` | `translation`, `durationSec` (camelCase) | 앱이 읽는 이름이다 |
+| 5 | 응답 언어 코드 | `ko` / `vi` / `zh` | `KOREAN` / `VIETNAMESE` / `CHINESE` | 앱 계약의 enum |
+| 6 | **표현 교정 API** | **없음** | `feedback/expression` 신설 | 아래 참고 |
+
+**왜 게이트웨이가 못 고치나** — CLAUDE.md의 핵심 제약이다.
+
+> FastAPI 응답 body를 파싱·가공하지 않는다. String으로 받아 그대로 통과시킨다
+
+파싱하는 순간 FastAPI 스키마가 바뀔 때마다 게이트웨이를 재배포해야 한다.
+그래서 **FastAPI 응답이 곧 앱이 받는 JSON**이고, 앱 계약이 기준이 될 수밖에 없다.
+
+**요청 쪽(`audio_file`, `language_code`, `ko`/`vi`/`zh`)은 게이트웨이가 맞춘다.**
+FastAPI 어댑터에서 같이 받아주면 총 작업량이 줄지만, 부담되면 게이트웨이가 변환한다.
+
+### ⚠️ 6번 — 표현 교정 API가 없다
+
+FastAPI 5개 중 `naturalSentence`·`naturalHint`·`highlightWords`를 만들어줄 API가 없다.
+**"이렇게 말하면 더 자연스러워요" 화면이 통째로 동작하지 않는다.**
+
+`feedback/speaking`(발음 채점)과는 다른 기능이다.
+
+| | 표현 교정 | 발음 채점 |
+|---|---|---|
+| 무엇을 보나 | 어떤 **단어**를 골랐나 | 어떻게 **소리** 냈나 |
+| 입력 | STT 텍스트 | 오디오 |
+| 예 | "주세**여**" → "주세**요**" | 단어는 맞지만 `ㅈ` 발음이 약함 |
+| FastAPI | **없음** | `feedback/speaking` ✓ |
+
+번역(`text/translate`)도 **이 응답에 합쳐야 한다.** 앱이 두 번 부르면 화면이 늦게 뜬다.
 
 ---
 
@@ -41,7 +97,7 @@ Base URL은 게이트웨이의 환경변수 `INFERENCE_BASE_URL`로 주입한다
 게이트웨이는 `Transfer-Encoding: chunked`로 보낸다. 캡처 원문:
 
 ```
-POST /ai/chat
+POST /internal/v1/speech/transcribe
 Content-Type: multipart/form-data;boundary=yPNU8nRDsHHHMi52i98bP5bAbwc3gj3xf6ff4f
 User-Agent: Java/17.0.16
 Transfer-Encoding: chunked          ← Content-Length 없음
@@ -85,7 +141,7 @@ POST /ai/stt
 
 아래는 전부 캡처 원문이다.
 
-### POST /ai/chat
+### POST /internal/v1/chat  (미사용)
 
 ```
 Content-Type: multipart/form-data;boundary=...
@@ -116,7 +172,7 @@ Content-Type: text/plain;charset=UTF-8
 
 | 파트 | 필수 | 값 |
 |---|---|---|
-| `audio` | ✅ | m4a/wav/webm, 최대 10MB (게이트웨이가 검증 후 통과시킨 것) |
+| `audio` | ✅ | m4a/wav/webm, 최대 10MB · **30초** (게이트웨이가 검증 후 통과시킨 것) |
 | `scenario` | ✅ | `ARRIVAL` / `CLASS` / `LUNCH` / `DISMISSAL` |
 | `history` | ✅ | JSON **문자열**. 없으면 `"[]"`. 형식 `[{"role":"user"\|"assistant","content":"..."}]` |
 | `nativeLanguage` | — | `KOREAN` / `CHINESE` / `VIETNAMESE`. 생략 시 파트 없음 |
@@ -124,7 +180,7 @@ Content-Type: text/plain;charset=UTF-8
 
 `history`는 파싱된 객체가 아니라 **문자열**이다. FastAPI에서 `json.loads()` 해야 한다.
 
-### POST /ai/stt
+### POST /internal/v1/speech/transcribe
 
 ```
 --boundary
@@ -143,7 +199,7 @@ ko-KR
 | `audio` | ✅ | 위와 동일 |
 | `language` | — | **BCP-47 자유 문자열** (`ko-KR` 등). enum이 아니다. 생략 시 `ko-KR`로 처리 |
 
-### POST /ai/tts
+### POST /internal/v1/speech/synthesize
 
 ```
 Content-Type: application/json
@@ -167,7 +223,7 @@ Content-Length: 65
 >
 > 주의: `/ai/stt`의 `language`는 BCP-47 문자열(`ko-KR`)이고, 이쪽은 enum이다.
 
-### POST /ai/feedback
+### POST /internal/v1/feedback/expression
 
 ```
 Content-Type: application/json
@@ -184,6 +240,48 @@ Content-Length: 145
 | `nativeLanguage` | — | 언어 enum |
 | `nickname` | ✅ | 아이 호칭(최대 20자). 피드백 문구에 쓴다. 항상 온다 |
 
+### POST /internal/v1/feedback/speaking  — 발음 채점
+
+```
+Content-Type: multipart/form-data
+Transfer-Encoding: chunked
+
+--boundary
+Content-Disposition: form-data; name="audio"; filename="speech.m4a"
+Content-Type: audio/mp4
+<바이너리>
+--boundary
+Content-Disposition: form-data; name="targetSentence"
+Content-Type: text/plain;charset=UTF-8
+안녕! 나도 만나서 반가워
+```
+
+| 파트 | 필수 | 값 |
+|---|---|---|
+| `audio` | ✅ | 따라 말한 녹음. m4a/wav/webm, 최대 10MB · **30초** |
+| `targetSentence` | ✅ | 따라 말해야 했던 문장 |
+
+> **STT를 거치지 않는다.** 발음은 텍스트로 알 수 없어서 녹음을 그대로 보낸다.
+> 게이트웨이는 오디오 형식·크기만 검증하고 통과시킨다.
+
+**응답** — 어절 단위 z점수. 필드명만 camelCase로 맞춰주면 된다.
+
+```json
+{ "success": true, "data": {
+    "sentence": "안녕! 나도 만나서 반가워",
+    "targetWord": "만나서",
+    "targetIndex": 2,
+    "targetZ": -1.82,
+    "quizSentence": "안녕! 나도 ＿＿＿ 반가워",
+    "words": [
+      { "word": "안녕!", "z": 0.31,  "warn": false, "worstPhone": null },
+      { "word": "만나서", "z": -1.82, "warn": true,  "worstPhone": "ㄴ" }
+    ] } }
+```
+
+`target_word` → `targetWord`, `worst_phone` → `worstPhone` 처럼 **snake_case만 바꾸면 된다.**
+나머지 구조는 지금 그대로다.
+
 ---
 
 ## 4. FastAPI 시그니처 — 그대로 쓰면 된다
@@ -196,7 +294,7 @@ from pydantic import BaseModel
 app = FastAPI()
 
 
-@app.post("/ai/chat")
+@app.post("/internal/v1/chat")          # 미사용
 async def chat(
     audio: UploadFile = File(...),
     scenario: str = Form(...),
@@ -207,7 +305,7 @@ async def chat(
     ...
 
 
-@app.post("/ai/stt")
+@app.post("/internal/v1/speech/transcribe")
 async def stt(
     audio: UploadFile = File(...),
     language: Optional[str] = Form(None),         # 생략 시 파트 자체가 없다
@@ -222,7 +320,7 @@ class TtsRequest(BaseModel):
     language: str                        # 필수 — KOREAN / CHINESE / VIETNAMESE
 
 
-@app.post("/ai/tts")
+@app.post("/internal/v1/speech/synthesize")
 async def tts(req: TtsRequest):
     ...
 
@@ -235,8 +333,16 @@ class FeedbackRequest(BaseModel):
     nickname: str
 
 
-@app.post("/ai/feedback")
+@app.post("/internal/v1/feedback/expression")
 async def feedback(req: FeedbackRequest):
+    ...
+
+
+@app.post("/internal/v1/feedback/speaking")
+async def pronunciation(
+    audio: UploadFile = File(...),
+    targetSentence: str = Form(...),     # 필드명 주의 — text 가 아니다
+):
     ...
 ```
 

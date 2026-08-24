@@ -55,6 +55,14 @@ public class AiController {
         return json(relayService.tts(rawBody));
     }
 
+    /** §6 발음 채점 — 오디오를 그대로 보낸다. 텍스트로는 발음을 알 수 없다 */
+    @PostMapping(value = "/pronunciation", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<String> pronunciation(
+            @RequestPart("audio") MultipartFile audio,
+            @RequestParam("targetSentence") String targetSentence) {
+        return json(relayService.pronunciation(audio, targetSentence));
+    }
+
     /** §5 발화 피드백 생성 */
     @PostMapping(value = "/feedback", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<String> feedback(@RequestBody String rawBody) {

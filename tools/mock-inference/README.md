@@ -35,7 +35,7 @@ export INFERENCE_BASE_URL=http://localhost:9000  # Mac/Linux
 
 ```bash
 curl http://localhost:8000/
-# {"mock": "inference", "routes": ["/ai/chat", "/ai/stt", "/ai/tts", "/ai/feedback"]}
+# 아는 경로 목록이 나온다 (FastAPI 실제 경로 + 옛 /ai/* 둘 다 받는다)
 ```
 
 ## 앱에서 접속할 주소
@@ -67,6 +67,7 @@ Android 9+와 iOS는 `https`가 아닌 통신을 기본 차단한다. 개발 빌
 
 | 엔드포인트 | 응답 |
 |---|---|
+| `/internal/v1/feedback/speaking` | 발음 채점. 세 번째 어절을 "가장 약한 곳"으로 고정해 `targetWord`·`quizSentence` 생성 |
 | `/ai/chat` | `userText` 고정, `aiText`에 **보낸 `nickname`을 넣어 되돌려준다**, 무음 mp3 1초 |
 | `/ai/stt` | `text: "많이 주세여"`, `confidence: 0.92` |
 | `/ai/tts` | 무음 mp3 1초 |
