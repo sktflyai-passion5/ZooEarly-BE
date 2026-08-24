@@ -52,12 +52,29 @@ ROUTES = {
     "/internal/v1/speech/synthesize": "tts",
     "/internal/v1/feedback/expression": "feedback",
     "/internal/v1/feedback/speaking": "pronunciation",
+    "/internal/v1/feedback/sentences": "sentences",
     "/ai/chat": "chat",
     "/ai/stt": "stt",
     "/ai/tts": "tts",
     "/ai/feedback": "feedback",
     "/ai/pronunciation": "pronunciation",
+    "/ai/pronunciation/sentences": "sentences",
 }
+
+# FastAPI 명세(2026-08-24 개정) 그대로. 등교·급식·하교 × 3개.
+# "표현 고르기" 화면의 선택지 3개가 여기서 온다 — 더 이상 앱 번들 데이터가 아니다.
+SENTENCES = [
+    {"sentenceId": "arrival_1",   "category": "arrival",   "text": "안녕 나도 만나서 반가워 !"},
+    {"sentenceId": "arrival_2",   "category": "arrival",   "text": "안녕! 우리 친하게 지내자"},
+    {"sentenceId": "arrival_3",   "category": "arrival",   "text": "안녕 잘 부탁해 !"},
+    {"sentenceId": "lunch_1",     "category": "lunch",     "text": "조금만 주세요."},
+    {"sentenceId": "lunch_2",     "category": "lunch",     "text": "적당히 주세요."},
+    {"sentenceId": "lunch_3",     "category": "lunch",     "text": "많이 주세요."},
+    {"sentenceId": "departure_1", "category": "departure", "text": "안녕히 가세요!"},
+    {"sentenceId": "departure_2", "category": "departure", "text": "네, 안녕히 가세요."},
+    {"sentenceId": "departure_3", "category": "departure", "text": "안녕히 계세요 !"},
+]
+SENTENCES_BY_ID = {s["sentenceId"]: s for s in SENTENCES}
 
 TRIGGERS = {
     "__slow__":       ("느린 응답 — 게이트웨이 타임아웃(504) 유발", None),
@@ -207,34 +224,65 @@ class Handler(BaseHTTPRequestHandler):
                 "translation": None if native == "KOREAN" else "Cho mình nhiều nhé.",
             })
         elif route == "pronunciation":
-            # 목표 문장을 어절로 쪼개고, 가운데 어절 하나를 "제일 약한 곳"으로 고정한다.
-            # 실제 모델은 z 점수로 고르지만, 여기서는 화면 배선 확인이 목적이다.
-            sentence = fields.get("targetSentence", "안녕! 나도 만나서 반가워")
+            # FastAPI 2026-08-24 개정: 자유 텍스트가 아니라 sentenceId(9개 중 하나)를
+            # 받는다. quizSentence는 응답에서 빠졌다 — 앱이 sentence+targetIndex로
+            # 직접 빈칸을 만들어야 한다 (게이트웨이는 응답을 가공하지 않는다).
+            sentence_id = fields.get("sentenceId")
+            entry = SENTENCES_BY_ID.get(sentence_id)
+            if entry is None:
+                # 다른 엔드포인트와 같은 봉투로 감싼다 — 이 목 서버는
+                # "어댑터를 거친 뒤"를 흉내내는 게 목적이다.
+                self._send(422, {"success": False, "error": {
+                    "code": "STT_FAILED",
+                    "message": "알 수 없는 문장이에요.",
+                    "field": "sentenceId"}})
+                return
+            sentence = entry["text"]
             words = sentence.split()
+
+            # __good__ 을 오디오 파일명에 넣으면 "발음이 전부 기준 이상"인 경우를
+            # 재현한다 — targetWord: null. 이때 앱은 퀴즈 화면 없이 바로 칭찬 화면으로
+            # 가야 한다 (명세 §6, FastAPI 2026-08-24 규칙).
+            if "__good__" in haystack:
+                self._ok({
+                    "sentenceId": sentence_id, "sentence": sentence,
+                    "targetWord": None, "targetIndex": None, "targetZ": None,
+                    "words": [{"word": w, "z": 0.31, "warn": False, "worstPhone": None}
+                             for w in words],
+                })
+                return
+
+            # 그 외에는 가운데 어절 하나를 "가장 약한 곳"으로 고정한다.
+            # 실제 모델은 z 점수(임계값 z < -1.5)로 고르지만, 여기서는 화면 배선
+            # 확인이 목적이라 결정론적으로 만든다.
             idx = min(2, len(words) - 1) if words else 0
             scored = []
             for i, w in enumerate(words):
                 z = -1.82 if i == idx else round(-0.55 + i * 0.29, 2)
                 scored.append({"word": w, "z": z, "warn": i == idx,
                                "worstPhone": "ㄴ" if i == idx else None})
-            quiz = list(words)
-            if quiz:
-                quiz[idx] = "＿＿＿"
             self._ok({
+                "sentenceId": sentence_id,
                 "sentence": sentence,
                 "targetWord": words[idx] if words else None,
                 "targetIndex": idx if words else None,
                 "targetZ": -1.82 if words else None,
-                "quizSentence": " ".join(quiz),
                 "words": scored,
             })
         else:
             self._send(404, {"detail": "no such route: %s" % self.path})
 
     def do_GET(self):
-        """브라우저로 열어 살아있는지 확인하는 용도."""
-        self._send(200, {"mock": "inference",
-                         "routes": sorted(ROUTES)})
+        route = ROUTES.get(self.path.rstrip("/"))
+        if route == "sentences":
+            print("\n[%s] GET %s -> 문장 %d개" % (time.strftime("%H:%M:%S"), self.path, len(SENTENCES)), flush=True)
+            # FastAPI 원본 응답은 배열을 봉투 없이 그대로 준다 (zooearly-fastapi-spec.md §5).
+            # 이 목 서버는 "어댑터를 거친 뒤"를 흉내내는 게 목적이라 다른 엔드포인트와
+            # 똑같이 {success, data} 로 감싼다 — data가 배열이다.
+            self._ok(SENTENCES)
+            return
+        # 그 외 GET은 전부 "살아있나" 확인용 — 브라우저로 열어보는 경우가 많다
+        self._send(200, {"mock": "inference", "routes": sorted(ROUTES)})
 
     # ── 로그 ────────────────────────────────────────────────
     def _log(self, fields):
@@ -255,5 +303,6 @@ if __name__ == "__main__":
     print("강제 에러: 텍스트나 파일명에 아래 토큰을 넣으면 재현된다")
     for token, (desc, _) in TRIGGERS.items():
         print("  %-16s %s" % (token, desc))
+    print("  %-16s pronunciation에서 '발음 전부 기준 이상'(targetWord: null) 재현" % "__good__")
     print("-" * 60, flush=True)
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()

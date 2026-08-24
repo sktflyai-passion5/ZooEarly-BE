@@ -18,7 +18,7 @@
 
 ---
 
-## 1. 엔드포인트 5개
+## 1. 엔드포인트 6개
 
 **경로는 FastAPI 쪽 이름을 그대로 쓴다.** 게이트웨이가 설정으로 맞춘다 — 바꿔달라고 하지 않는다.
 
@@ -28,6 +28,7 @@
 | `POST /api/v1/ai/tts` | `POST /internal/v1/speech/synthesize` | application/json |
 | `POST /api/v1/ai/feedback` | `POST /internal/v1/feedback/expression` ⚠️ | application/json |
 | `POST /api/v1/ai/pronunciation` | `POST /internal/v1/feedback/speaking` | multipart/form-data |
+| `GET /api/v1/ai/pronunciation/sentences` | `GET /internal/v1/feedback/sentences` | 없음 (GET) |
 | `POST /api/v1/ai/chat` | `POST /internal/v1/chat` (미사용) | multipart/form-data |
 
 ⚠️ `feedback/expression`은 **아직 FastAPI에 없는 경로**다. 4번 항목 참고.
@@ -41,6 +42,7 @@ inference:
     tts: /internal/v1/speech/synthesize
     feedback: /internal/v1/feedback/expression
     pronunciation: /internal/v1/feedback/speaking
+    sentences: /internal/v1/feedback/sentences
 ```
 
 Base URL은 환경변수 `INFERENCE_BASE_URL`로 주입한다 (기본 `http://localhost:8000`).
@@ -61,6 +63,12 @@ FastAPI 명세(`zooearly-fastapi-spec.md`)와 대조한 결과다.
 | 4 | 응답 필드명 | `translated_text`, `duration_sec` | `translation`, `durationSec` (camelCase) | 앱이 읽는 이름이다 |
 | 5 | 응답 언어 코드 | `ko` / `vi` / `zh` | `KOREAN` / `VIETNAMESE` / `CHINESE` | 앱 계약의 enum |
 | ~~6~~ | ~~**표현 교정 API**~~ | 없음 | **당분간 만들지 않는다** | 화면을 구현하지 않기로 했다 |
+| 7 | **발음 채점 응답 봉투** | (2번과 동일) | `{success, data}` | `/feedback/speaking`에도 2번 규칙이 그대로 적용된다 |
+| 8 | 문장 목록 응답 봉투 | 배열을 봉투 없이 그대로 | `{success, data: [...]}` | `GET /feedback/sentences`도 마찬가지. `data`가 배열이면 된다 |
+
+**요청 쪽은 이미 맞다 — 고칠 필요 없다.** `/feedback/speaking`의 `sentence_id` 필드,
+`GET /feedback/sentences`의 `sentence_id`/`category`/`text` 필드는 게이트웨이가 그대로
+쓸 수 있는 모양으로 나온다(2026-08-24 개정). 이 문서 §3·§4는 그 형태를 그대로 반영한다.
 
 **왜 게이트웨이가 못 고치나** — CLAUDE.md의 핵심 제약이다.
 
@@ -245,6 +253,9 @@ Content-Length: 145
 
 ### POST /internal/v1/feedback/speaking  — 발음 채점
 
+게이트웨이가 실제로 보내는 파트 이름이다 (2026-08-24 FastAPI 명세 개정 반영 — `text`가
+아니라 `sentence_id`를 받는 버전).
+
 ```
 Content-Type: multipart/form-data
 Transfer-Encoding: chunked
@@ -254,36 +265,64 @@ Content-Disposition: form-data; name="audio"; filename="speech.m4a"
 Content-Type: audio/mp4
 <바이너리>
 --boundary
-Content-Disposition: form-data; name="targetSentence"
+Content-Disposition: form-data; name="sentenceId"
 Content-Type: text/plain;charset=UTF-8
-안녕! 나도 만나서 반가워
+arrival_2
 ```
 
 | 파트 | 필수 | 값 |
 |---|---|---|
 | `audio` | ✅ | 따라 말한 녹음. m4a/wav/webm, 최대 10MB · **30초** |
-| `targetSentence` | ✅ | 따라 말해야 했던 문장 |
+| `sentenceId` | ✅ | `GET /internal/v1/feedback/sentences`가 준 9개 값 중 하나. **camelCase다** — FastAPI 응답 예시의 `sentence_id`와 대소문자만 다르다는 점 주의 |
 
 > **STT를 거치지 않는다.** 발음은 텍스트로 알 수 없어서 녹음을 그대로 보낸다.
-> 게이트웨이는 오디오 형식·크기만 검증하고 통과시킨다.
+> 게이트웨이는 오디오 형식·크기만 검증하고 통과시킨다. `sentenceId`가 유효한 값인지는
+> 검증하지 않는다 — 그건 FastAPI가 자기 목록으로 판단한다 (422로 알려주면 된다).
 
 **응답** — 어절 단위 z점수. 필드명만 camelCase로 맞춰주면 된다.
 
 ```json
 { "success": true, "data": {
-    "sentence": "안녕! 나도 만나서 반가워",
-    "targetWord": "만나서",
+    "sentenceId": "arrival_2",
+    "sentence": "안녕! 우리 친하게 지내자",
+    "targetWord": "지내자",
     "targetIndex": 2,
     "targetZ": -1.82,
-    "quizSentence": "안녕! 나도 ＿＿＿ 반가워",
     "words": [
       { "word": "안녕!", "z": 0.31,  "warn": false, "worstPhone": null },
-      { "word": "만나서", "z": -1.82, "warn": true,  "worstPhone": "ㄴ" }
+      { "word": "지내자", "z": -1.82, "warn": true,  "worstPhone": "ㄴ" }
     ] } }
 ```
 
-`target_word` → `targetWord`, `worst_phone` → `worstPhone` 처럼 **snake_case만 바꾸면 된다.**
-나머지 구조는 지금 그대로다.
+`sentence_id` → `sentenceId`, `target_word` → `targetWord`, `worst_phone` → `worstPhone`
+처럼 **snake_case만 camelCase로 바꾸면 된다.** 나머지 구조는 지금 그대로다.
+
+**`quizSentence` 필드는 없다** (2026-08-24 FastAPI 명세에서 빠졌다). 앱이
+`sentence`를 공백으로 나눠 `targetIndex`번째를 빈칸으로 바꿔서 직접 만든다.
+FastAPI·게이트웨이 둘 다 이 필드를 만들 필요가 없다.
+
+**`targetWord: null`은 정상 응답이다.** 발음이 전부 기준(z ≥ -1.5) 이상이면 FastAPI가
+`target_word: null`을 준다. 그대로 `targetWord: null`로 통과시키면 된다 — 에러가 아니다.
+
+### GET /internal/v1/feedback/sentences  — 발음 연습 문장 목록
+
+```
+GET /internal/v1/feedback/sentences
+```
+
+body 없음, 인증 헤더 없음. 게이트웨이는 이 요청을 그대로 중계한다.
+
+**응답** — FastAPI 원본은 배열을 봉투 없이 그대로 준다 (`zooearly-fastapi-spec.md` §5).
+게이트웨이로 보낼 때는 다른 엔드포인트와 똑같이 `{success, data}`로 감싼다 — `data`가 배열이다.
+
+```json
+{ "success": true, "data": [
+    { "sentenceId": "arrival_1", "category": "arrival", "text": "안녕 나도 만나서 반가워 !" },
+    { "sentenceId": "arrival_2", "category": "arrival", "text": "안녕! 우리 친하게 지내자" }
+  ] }
+```
+
+`sentence_id` → `sentenceId`만 camelCase로 바꾸면 된다. `category`·`text`는 그대로 쓴다.
 
 ---
 
@@ -344,12 +383,18 @@ async def feedback(req: FeedbackRequest):
 @app.post("/internal/v1/feedback/speaking")
 async def pronunciation(
     audio: UploadFile = File(...),
-    targetSentence: str = Form(...),     # 필드명 주의 — text 가 아니다
+    sentenceId: str = Form(...),         # 필드명 주의 — text 도 targetSentence 도 아니다
 ):
+    ...
+
+
+@app.get("/internal/v1/feedback/sentences")
+async def sentences():
+    # 9개 고정 목록. 요청 파라미터 없음
     ...
 ```
 
-필드 이름이 camelCase다 (`nativeLanguage`, `targetSentence`). snake_case로 바꾸면 안 된다.
+필드 이름이 camelCase다 (`nativeLanguage`, `targetSentence`, `sentenceId`). snake_case로 바꾸면 안 된다.
 
 ---
 
@@ -408,7 +453,7 @@ FastAPI 기본 에러 형식인 `{"detail": "..."}`로 내면 앱이 못 읽는�
 | 엔드포인트 | 제한 |
 |---|---|
 | `/ai/chat` | **30초** (STT + LLM + TTS 3단이라 길게 잡음) |
-| `/ai/stt` `/ai/tts` `/ai/feedback` | **15초** |
+| `/ai/stt` `/ai/tts` `/ai/feedback` `/ai/pronunciation` `/ai/pronunciation/sentences` | **15초** |
 | 연결(TCP) | 3초 |
 
 OpenAI 호출이 느릴 수 있으니 FastAPI 쪽에서도 자체 타임아웃을 이보다
@@ -422,23 +467,21 @@ FastAPI를 8000번에 띄운 뒤, 게이트웨이 없이 직접 때려보면 된
 
 ```bash
 # stt — 선택 필드 없이 (가장 흔한 실패 케이스)
-curl -X POST http://localhost:8000/ai/stt -F "audio=@test.m4a;type=audio/m4a"
+curl -X POST http://localhost:8000/internal/v1/speech/transcribe \
+  -F "audio=@test.m4a;type=audio/m4a"
 
-# chat
-curl -X POST http://localhost:8000/ai/chat \
+# 문장 목록 — 먼저 받아서 유효한 sentenceId를 확인한다
+curl http://localhost:8000/internal/v1/feedback/sentences
+
+# 발음 채점 — 위에서 받은 sentenceId 중 하나를 쓴다
+curl -X POST http://localhost:8000/internal/v1/feedback/speaking \
   -F "audio=@test.m4a;type=audio/m4a" \
-  -F "scenario=LUNCH" \
-  -F 'history=[]'
+  -F "sentenceId=arrival_2"
 
 # tts
-curl -X POST http://localhost:8000/ai/tts \
+curl -X POST http://localhost:8000/internal/v1/speech/synthesize \
   -H 'Content-Type: application/json' \
-  -d '{"text":"불고기 많이 줄까?"}'
-
-# feedback — recognizedText가 null인 케이스
-curl -X POST http://localhost:8000/ai/feedback \
-  -H 'Content-Type: application/json' \
-  -d '{"targetSentence":"많이 주세요.","recognizedText":null}'
+  -d '{"text":"불고기 많이 줄까?","language":"KOREAN"}'
 ```
 
 그 다음 게이트웨이를 띄워 전체를 확인한다.
@@ -446,6 +489,7 @@ curl -X POST http://localhost:8000/ai/feedback \
 ```bash
 INFERENCE_BASE_URL=http://localhost:8000 ./gradlew bootRun
 curl -X POST http://localhost:8080/api/v1/ai/stt -F "audio=@test.m4a"
+curl http://localhost:8080/api/v1/ai/pronunciation/sentences
 ```
 
 게이트웨이가 `502 AI_SERVER_ERROR`를 내면 FastAPI가 4xx/5xx를 냈다는 뜻이고,

@@ -67,7 +67,8 @@ Android 9+와 iOS는 `https`가 아닌 통신을 기본 차단한다. 개발 빌
 
 | 엔드포인트 | 응답 |
 |---|---|
-| `/internal/v1/feedback/speaking` | 발음 채점. 세 번째 어절을 "가장 약한 곳"으로 고정해 `targetWord`·`quizSentence` 생성 |
+| `/internal/v1/feedback/sentences` | 고정 문장 9개(등교·급식·하교 × 3). FastAPI 명세 원문 그대로 |
+| `/internal/v1/feedback/speaking` | 발음 채점. `sentenceId`로 문장을 찾고, 세 번째 어절을 "가장 약한 곳"으로 고정해 `targetWord` 생성. 파일명에 `__good__`을 넣으면 `targetWord: null`(전부 기준 이상) 재현 |
 | `/ai/chat` | `userText` 고정, `aiText`에 **보낸 `nickname`을 넣어 되돌려준다**, 무음 mp3 1초 |
 | `/ai/stt` | `text: "많이 주세여"`, `confidence: 0.92` |
 | `/ai/tts` | 무음 mp3 1초 |
