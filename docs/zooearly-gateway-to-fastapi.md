@@ -18,7 +18,7 @@
 
 ---
 
-## 1. 엔드포인트 6개
+## 1. 엔드포인트 7개
 
 **경로는 FastAPI 쪽 이름을 그대로 쓴다.** 게이트웨이가 설정으로 맞춘다 — 바꿔달라고 하지 않는다.
 
@@ -29,6 +29,7 @@
 | `POST /api/v1/ai/feedback` | `POST /internal/v1/feedback/expression` ⚠️ | application/json |
 | `POST /api/v1/ai/pronunciation` | `POST /internal/v1/feedback/speaking` | multipart/form-data |
 | `GET /api/v1/ai/pronunciation/sentences` | `GET /internal/v1/feedback/sentences` | 없음 (GET) |
+| `POST /api/v1/ai/story` | `POST /internal/v1/story/generate` | application/json |
 | `POST /api/v1/ai/chat` | `POST /internal/v1/chat` (미사용) | multipart/form-data |
 
 ⚠️ `feedback/expression`은 **아직 FastAPI에 없는 경로**다. 4번 항목 참고.
@@ -43,6 +44,7 @@ inference:
     feedback: /internal/v1/feedback/expression
     pronunciation: /internal/v1/feedback/speaking
     sentences: /internal/v1/feedback/sentences
+    story: /internal/v1/story/generate
 ```
 
 Base URL은 환경변수 `INFERENCE_BASE_URL`로 주입한다 (기본 `http://localhost:8000`).
@@ -70,6 +72,8 @@ FastAPI 명세(`zooearly-fastapi-spec.md`)와 대조한 결과다.
 | ~~6~~ | ~~**표현 교정 API**~~ | 없음 | **당분간 만들지 않는다** | 화면을 구현하지 않기로 했다 |
 | 7 | **발음 채점 응답 봉투** | (2번과 동일) | `{success, data}` | `/feedback/speaking`에도 2번 규칙이 그대로 적용된다 |
 | 8 | 문장 목록 응답 봉투 | 배열을 봉투 없이 그대로 | `{success, data: [...]}` | `GET /feedback/sentences`도 마찬가지. `data`가 배열이면 된다 |
+| 9 | **동화 요청 필드명** | `child_name`, `partner_line`, `child_said`, `poem_text`, `practiced_word` (snake_case) | **camelCase로 받기** — `childName`, `partnerLine`, `childSaid`, `poemText`, `practicedWord` | 게이트웨이는 앱 body를 그대로 통과시킨다. `sentenceId`와 같은 규칙이다 (§3 참고) |
+| 10 | 동화 응답 봉투 | `{title, scenes}` | `{success, data: {title, scenes}}` | 2번 규칙이 그대로 적용된다 |
 
 **요청 쪽은 이미 맞다 — 고칠 필요 없다.** `/feedback/speaking`의 `sentence_id` 필드,
 `GET /feedback/sentences`의 `sentence_id`/`category`/`text` 필드는 게이트웨이가 그대로
@@ -336,6 +340,44 @@ body 없음, 인증 헤더 없음. 게이트웨이는 이 요청을 그대로 �
 이걸로 수업시간의 "같이 읽어볼까요?"가 등교/급식/하교와 **같은 `/pronunciation` 경로를
 그대로 쓸 수 있다** — 별도 낭독 전용 엔드포인트(`feedback/reading`)가 필요 없어졌다.
 
+### POST /internal/v1/story/generate  — 동화 생성
+
+**실제로 도착하는 body** (게이트웨이가 앱 JSON을 그대로 통과시킨 것을 목 서버에서 캡처):
+
+```json
+{
+  "childName": "지우",
+  "scenes": [
+    { "category": "school_arrival", "partnerLine": "안녕! 오늘도 만나서 반가워", "childSaid": "안녕! 나도 만나서 반가워 !" },
+    { "category": "class", "poemText": "노란 꽃이 피었어요. 바람이 살랑살랑 꽃이 웃어요.", "practicedWord": "살랑살랑" },
+    { "category": "lunch", "partnerLine": "오늘 반찬 맛있게 먹어요", "childSaid": null },
+    { "category": "school_departure", "partnerLine": "오늘도 수고했어, 내일 봐", "childSaid": "선생님, 안녕히 가세요!" }
+  ]
+}
+```
+
+**★ 필드명이 camelCase다.** FastAPI 명세(`zooearly-fastapi-spec.md` §7)의 예시는
+`child_name`·`partner_line`·`child_said`·`poem_text`·`practiced_word`인데,
+**실제로는 위처럼 도착한다.** `sentenceId`와 같은 상황이다 — 게이트웨이가 앱 body를
+가공 없이 통과시키기 때문이고, 앱 계약이 camelCase다.
+
+게이트웨이가 **먼저 걸러서 400으로 끊는 것들** (여기까지 오지 않는다):
+
+| 걸러지는 조건 | 앱이 받는 field |
+|---|---|
+| `childName` 없음·빈 값·20자 초과 | `childName` |
+| `scenes`가 배열이 아니거나 4개가 아님 | `scenes` |
+| i번째 `category`가 고정 순서와 다름 | `scenes[i].category` |
+| 대화 장면인데 `partnerLine`이 빔 | `scenes[i].partnerLine` |
+| `class`인데 `poemText`가 빔 | `scenes[i].poemText` |
+
+그래서 FastAPI의 422 세 가지(개수·순서·빈 `partner_line`)는 **정상 경로에서는 거의 안 쓰인다.**
+그래도 방어용으로 남겨두는 편이 좋다 — 게이트웨이를 거치지 않고 직접 호출될 수 있다.
+
+> **타임아웃 60초.** 다른 엔드포인트는 15초인데 동화만 길다. 4장면을 한 번에 생성해서다.
+> 이 시간을 넘기면 게이트웨이가 `504 AI_TIMEOUT`을 만들어 앱에 준다.
+> **실측이 아니라 여유값이라, 실제 소요 시간을 알려주면 줄이겠다.**
+
 ---
 
 ## 4. FastAPI 시그니처 — 그대로 쓰면 된다
@@ -464,9 +506,13 @@ FastAPI 기본 에러 형식인 `{"detail": "..."}`로 내면 앱이 못 읽는�
 
 | 엔드포인트 | 제한 |
 |---|---|
+| `/ai/story` | **60초** (4장면을 한 번에 생성해 가장 오래 걸린다) |
 | `/ai/chat` | **30초** (STT + LLM + TTS 3단이라 길게 잡음) |
 | `/ai/stt` `/ai/tts` `/ai/feedback` `/ai/pronunciation` `/ai/pronunciation/sentences` | **15초** |
 | 연결(TCP) | 3초 |
+
+`/ai/story`의 60초는 **실측이 아니라 여유값이다.** 명세에 소요 시간이 없어 넉넉히 잡았다 —
+실제로 얼마나 걸리는지 알려주면 줄인다. 타임아웃이 길면 정말 죽었을 때 아이를 오래 기다리게 한다.
 
 OpenAI 호출이 느릴 수 있으니 FastAPI 쪽에서도 자체 타임아웃을 이보다
 짧게 걸어두면 좋다. 그래야 게이트웨이가 끊기 전에 의미 있는 에러를 만들 수 있다.

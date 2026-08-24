@@ -76,6 +76,17 @@ public class AiController {
         return json(relayService.feedback(rawBody));
     }
 
+    /**
+     * §7 동화 생성 — 하루치 플레이 기록 4장면을 동화로 엮는다.
+     *
+     * 다른 엔드포인트보다 오래 걸린다(LLM이 4장면을 한 번에 생성).
+     * 타임아웃은 application.yml의 inference.timeout.story-read-seconds가 따로 잡는다.
+     */
+    @PostMapping(value = "/story", consumes = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> story(@RequestBody String rawBody) {
+        return json(relayService.story(rawBody));
+    }
+
     private ResponseEntity<String> json(String body) {
         return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(body);
     }
