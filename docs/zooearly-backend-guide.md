@@ -744,16 +744,62 @@ az containerapp update --name zooearly-gateway --resource-group zooearly-rg \
 
 브랜치 전략(`main` = 시연 가능한 안정판)에 그대로 맞춘다.
 
-| 트리거 | 하는 일 |
-|---|---|
-| `dev`로 가는 PR / 푸시 | 빌드 + 테스트만 (`build.yml` — 이미 있음) |
-| **`main` 머지** | 이미지 빌드 → ACR 푸시 → Container Apps 배포 |
+| 트리거 | 하는 일 | 파일 |
+|---|---|---|
+| `dev`·`main`으로 가는 PR / 푸시 | 빌드 + 테스트 | `build.yml` |
+| **`main` 머지** | 테스트 → 이미지 빌드 → ACR 푸시 → 배포 → 스모크 확인 | `deploy.yml` |
 
-**`main`에 머지 = 배포**로 두면 규칙이 새로 늘지 않는다. `main`은 원래 "그 시점에 돌아가는 버전"이어야 하므로, 그게 곧 배포 대상이다.
+**`main`에 머지 = 배포**로 두면 규칙이 새로 늘지 않는다. `main`은 원래 "그 시점에 돌아가는 버전"이어야 하므로, 그게 곧 배포 대상이다. `dev`는 배포하지 않는다.
 
-인증은 **OIDC(federated credentials)** 를 권장한다. GitHub Actions가 Azure에 접속할 때 비밀번호나 publish profile을 GitHub Secrets에 저장하지 않아도 되는 방식이라, "비밀값을 레포에 두지 않는다"는 원칙과 결이 같다.
+#### 인증은 OIDC — 비밀번호를 저장하지 않는다
 
-> 워크플로 파일(`deploy.yml`)은 Azure 리소스를 실제로 만든 뒤에 추가한다. 리소스가 없는 상태로 워크플로만 있으면 `main`에 머지될 때마다 실패한다.
+GitHub Actions가 Azure에 접속할 때 **비밀번호(client secret)를 GitHub에 저장하지 않는 방식**이다. Actions가 발급받은 단기 토큰을 Azure가 검증하고, 그 토큰은 **이 레포의 `main` 브랜치에서 실행될 때만** 발급된다. "비밀값을 레포에 두지 않는다"는 원칙과 결이 같다.
+
+아래는 **이미 실행해둔 설정**이다. 리소스를 새로 만들거나 다른 레포에 붙일 때 참고한다.
+
+```bash
+# ① 앱 등록 + 서비스 주체
+appId=$(az ad app create --display-name "zooearly-gh-deploy" --query appId -o tsv)
+az ad sp create --id $appId
+
+# ② 페더레이션 자격증명 — 이 레포의 main 브랜치에만 묶는다.
+#    subject가 정확히 일치해야 토큰이 발급된다. 브랜치를 바꾸면 여기도 바꿔야 한다.
+cat > fedcred.json <<'JSON'
+{
+  "name": "github-main",
+  "issuer": "https://token.actions.githubusercontent.com",
+  "subject": "repo:sktflyai-passion5/ZooEarly-BE:ref:refs/heads/main",
+  "audiences": ["api://AzureADTokenExchange"]
+}
+JSON
+az ad app federated-credential create --id $appId --parameters fedcred.json
+
+# ③ 권한 — 필요한 최소한만 준다
+sub=$(az account show --query id -o tsv)
+az role assignment create --assignee $appId --role AcrPush   --scope "/subscriptions/$sub/resourceGroups/zooearly-rg/providers/Microsoft.ContainerRegistry/registries/zooearlyacr2408"
+az role assignment create --assignee $appId --role Contributor   --scope "/subscriptions/$sub/resourceGroups/zooearly-rg/providers/Microsoft.App/containerApps/zooearly-gateway"
+az role assignment create --assignee $appId --role Reader   --scope "/subscriptions/$sub/resourceGroups/zooearly-rg"
+```
+
+권한을 이렇게 쪼갠 이유는 **구독 전체에 쓰기 권한을 주지 않기 위해서다.**
+
+| 역할 | 범위 | 왜 |
+|---|---|---|
+| `AcrPush` | ACR 하나 | 이미지 푸시만. 레지스트리 삭제 권한은 없다 |
+| `Contributor` | Container App 하나 | 이 앱만 갱신. 다른 리소스는 못 건드린다 |
+| `Reader` | 리소스 그룹 | 배포 시 환경 정보를 읽어야 해서 **읽기만** |
+
+#### GitHub Secrets
+
+레포 `Settings` → `Secrets and variables` → `Actions`에 아래 3개가 등록되어 있다.
+
+| 이름 | 값 | 비밀인가 |
+|---|---|---|
+| `AZURE_CLIENT_ID` | ① 의 `appId` | 식별자 (비밀번호 아님) |
+| `AZURE_TENANT_ID` | `az account show --query tenantId -o tsv` | 식별자 |
+| `AZURE_SUBSCRIPTION_ID` | `az account show --query id -o tsv` | 식별자 |
+
+**셋 다 비밀번호가 아니다.** OIDC의 보안은 ②의 `subject`가 정확히 일치할 때만 토큰이 나오는 데서 온다. 그래도 관례상 Secrets에 둔다.
 
 ### 5.11 프론트에 알려줄 주소
 
@@ -774,6 +820,30 @@ EXPO_PUBLIC_SERVICE_API_URL=https://zooearly-gateway.politesmoke-47da854d.japane
 
 **리소스를 지우지 않는 한 이 주소는 고정**이므로 한 번만 알려주면 된다.
 LAN IP처럼 WiFi가 바뀔 때마다 다시 알려줄 필요가 없다 — 배포하는 이유 중 하나다.
+
+### 5.11-1 프론트 도메인 CORS 허용 ⚠️
+
+프론트가 **브라우저에서 도는 웹으로 배포**되면(Azure Static Website 등) 게이트웨이가 그 도메인을 CORS로 허용해야 한다. 안 하면 preflight가 `403 Invalid CORS request`로 끊겨 **프론트의 모든 호출이 실패한다.**
+
+```bash
+az containerapp update -n zooearly-gateway -g zooearly-rg   --set-env-vars CORS_ALLOWED_ORIGINS="https://stzooearlyfe.z12.web.core.windows.net"
+```
+
+**현재 허용된 오리진**: `https://stzooearlyfe.z12.web.core.windows.net`
+
+- 여러 개면 **쉼표로 구분**한다 (`https://a.com,https://b.com`)
+- 오리진에 **경로나 끝 슬래시를 붙이지 않는다** — `https://example.com` 형태여야 한다
+- `--set-env-vars`는 지정한 변수만 더하거나 바꾼다. `INFERENCE_BASE_URL` 같은 기존 값은 유지된다
+- **프론트 도메인이 바뀌면 이 값도 바꿔야 한다.** 코드 재배포는 필요 없다
+
+확인하는 법:
+
+```bash
+curl -i -X OPTIONS https://<FQDN>/api/v1/ai/tts   -H "Origin: https://stzooearlyfe.z12.web.core.windows.net"   -H "Access-Control-Request-Method: POST"   -H "Access-Control-Request-Headers: content-type"
+# → 200 + access-control-allow-origin 헤더가 있어야 정상
+```
+
+> 허용하지 않은 오리진은 계속 403으로 막힌다. 와일드카드(`*`)를 쓰지 않기 때문에 아무 사이트나 이 API를 부를 수 없다.
 
 ### 5.12 FastAPI가 배포되면 연결하기
 

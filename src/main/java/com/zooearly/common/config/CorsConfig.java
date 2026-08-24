@@ -6,14 +6,16 @@ import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 /**
- * 브라우저에서 앱을 띄울 때(Expo web)만 필요한 설정이다.
+ * 프론트가 브라우저에서 돌 때 필요한 설정이다.
  *
- * 실제 배포 대상인 React Native 네이티브 앱은 브라우저가 아니라서 CORS 자체가 없다.
- * 하지만 개발 중 `npm run web`으로 화면을 확인하려면 preflight(OPTIONS)가 통과해야 하는데,
- * 설정이 없으면 스프링이 403 "Invalid CORS request"로 끊어 모든 호출이 실패한다.
+ * 앱이 Azure Static Website로 배포되면서 실서버에서도 켜야 하는 값이 됐다.
+ * React Native 네이티브였다면 브라우저가 아니라서 CORS 자체가 없었을 것이다.
+ * 설정이 없으면 스프링이 preflight(OPTIONS)를 403 "Invalid CORS request"로 끊어
+ * 프론트의 모든 호출이 실패한다.
  *
- * 기본값은 비어 있고, 그때는 CORS를 아예 켜지 않는다 — 배포 환경에서 굳이 열어둘 이유가 없다.
- * 개발자가 필요할 때만 CORS_ALLOWED_ORIGINS로 오리진을 명시해서 켠다.
+ * 기본값은 비어 있고 그때는 CORS를 아예 켜지 않는다. 와일드카드(*)를 기본값으로
+ * 두지 않는 이유이기도 하다 — 열 거면 누가 봐도 알게 오리진을 명시해서 연다.
+ * 허용 오리진은 배포 환경마다 다르므로 코드에 박지 않고 환경변수로만 주입한다.
  */
 @Configuration
 public class CorsConfig implements WebMvcConfigurer {
