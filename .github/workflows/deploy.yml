@@ -1,0 +1,543 @@
+name: deploy
+
+# ─────────────────────────────────────────────────────────────────────────────
+# main 머지 → 테스트 → 이미지 빌드 → ACR 푸시 → Container Apps 배포 → 확인 → (실패 시) 롤백
+#
+# 왜 main 푸시가 트리거인가:
+#   브랜치 규칙(CLAUDE.md)상 main은 "그 시점에 돌아가는 버전"이고 dev에서 PR로만 들어온다.
+#   그래서 "main이 갱신됐다"와 "배포해야 한다"가 원래 같은 뜻이다. 규칙을 새로 만들지 않는다.
+#
+# 이 파일이 지키는 네 가지:
+#   1. 비밀번호를 저장하지 않는다        — OIDC 단기 토큰. 폴백은 시크릿만 넣으면 자동 전환된다
+#   2. 앱 설정을 건드리지 않는다          — --image만 바꾼다. INFERENCE_* / CORS_* 는 Azure 쪽 소유다
+#   3. 강한 권한과 남의 코드를 섞지 않는다 — 테스트는 토큰 없는 별도 잡에서 돈다
+#   4. 배포한 것이 무엇인지 남긴다        — 이미지는 digest로 고정, 요약에 롤백 방법까지 적는다
+#
+# 사람이 미리 해둬야 하는 준비는 docs/zooearly-backend-guide.md §5.10 참고.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [ main ]
+    # 문서만 고친 머지로 리비전을 갈아끼우면 "지금 뜬 게 어느 코드냐"가 오히려 흐려진다.
+    # 여기 적힌 것들은 .dockerignore가 이미 제외해서 이미지에 들어가지도 않는다.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+      - '.vscode/**'
+
+  # 손으로 돌리는 용도 = 롤백 버튼.
+  # 발표장에서 노트북에 az CLI가 없어도 브라우저만으로 되돌릴 수 있어야 한다.
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: '되돌릴 이미지 태그 (예: sha-1a2b3c4, v1). 비우면 현재 커밋을 새로 빌드한다. ★ 브랜치는 반드시 main을 고를 것'
+        required: false
+        default: ''
+
+# GITHUB_TOKEN 기본 권한을 통째로 끈다. 레포 설정이 read/write여도 여기서 0으로 내려간다.
+# 필요한 잡에서만 다시 켠다.
+permissions: {}
+
+# 배포가 겹치면 나중에 시작한 것이 먼저 끝나 옛 이미지가 최종본으로 남을 수 있다. 줄을 세운다.
+# cancel-in-progress를 켜지 않는 이유: 푸시와 update 사이에서 잘리면
+# "ACR에는 이미지가 있는데 앱에는 안 올라간" 어중간한 상태가 남는다.
+concurrency:
+  group: deploy-zooearly-gateway
+  cancel-in-progress: false
+
+env:
+  AZ_RESOURCE_GROUP: zooearly-rg
+  AZ_CONTAINERAPP: zooearly-gateway
+  ACR_NAME: zooearlyacr2408
+  ACR_LOGIN_SERVER: zooearlyacr2408.azurecr.io
+  IMAGE_REPO: zooearly-gateway
+
+jobs:
+  # ══ 테스트 ══════════════════════════════════════════════════════════════════
+  # 배포 잡과 분리한 이유가 핵심이다.
+  # ./gradlew test는 레포의 build.gradle과 Maven Central에서 받아온 코드를 JVM에서 실행한다.
+  # 이걸 id-token: write가 켜진 잡에서 돌리면 ACTIONS_ID_TOKEN_REQUEST_* 환경변수가 그 코드에
+  # 그대로 보이고, 그 둘만 있으면 스스로 Azure 토큰을 받아낼 수 있다.
+  # 그래서 "믿을 수 없는 입력"과 "배포 권한"을 아예 다른 러너로 갈라놓는다.
+  #
+  # Dockerfile이 bootJar -x test로 테스트를 건너뛰므로 배포 경로에서 한 번은 돌아야 한다.
+  # build.yml도 같은 커밋을 돌지만 별개 워크플로라 이 배포를 막아주지는 못한다.
+  test:
+    # 롤백(image_tag 지정)은 이미 검증된 과거 이미지를 다시 띄우는 것이라 빌드·테스트가 없다.
+    if: github.repository == 'sktflyai-passion5/ZooEarly-BE' && github.event.inputs.image_tag == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read          # id-token 없음 — 이 잡은 Azure에 로그인하지 않는다
+
+    steps:
+      - name: 체크아웃
+        # 서드파티 액션은 전부 커밋 SHA로 고정한다. v4 같은 이동 태그는 업스트림에서 언제든
+        # 다른 커밋을 가리키게 바뀔 수 있고, 실제로 그걸 노린 사고가 있었다(tj-actions, 2025-03).
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # 기본값은 GITHUB_TOKEN을 러너의 .git/config에 평문으로 남긴다.
+          # 이 잡은 git push를 하지 않으므로 남길 이유가 없다.
+          persist-credentials: false
+
+      - name: JDK 17
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          java-version: '17'      # build.gradle의 toolchain과 맞춘다
+          distribution: 'temurin'
+          # setup-java 내장 캐시를 쓴다 — 서드파티 액션을 하나 더 늘리지 않으려는 것이다.
+          # 이 캐시는 토큰이 없는 이 잡에만 있으므로, 캐시가 오염돼도 배포 권한에는 닿지 않는다.
+          cache: gradle
+
+      - name: 테스트
+        run: ./gradlew test --no-daemon
+
+  # ══ 배포 ════════════════════════════════════════════════════════════════════
+  deploy:
+    needs: [ test ]
+    # 롤백 실행에서는 test가 skipped라 always()가 필요하다.
+    # 대신 success/skipped만 통과시켜서 "테스트 실패인데 배포"는 막는다.
+    if: >-
+      always()
+      && github.repository == 'sktflyai-passion5/ZooEarly-BE'
+      && (needs.test.result == 'success' || needs.test.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # ★ environment: 를 쓰지 않는다.
+    #   잡이 environment를 참조하면 GitHub이 발급하는 OIDC 토큰의 subject가
+    #   repo:.../ZooEarly-BE:ref:refs/heads/main 에서 repo:.../ZooEarly-BE:environment:<이름> 으로 바뀐다.
+    #   지금 Azure에 등록된 페더레이션 자격증명은 ref:refs/heads/main 하나뿐이라(가이드 §5.10)
+    #   environment를 붙이는 순간 첫 배포부터 AADSTS70021로 로그인이 거부된다.
+    #   승인 게이트가 필요해지면 Azure에 environment subject를 먼저 등록하고 그때 켠다(준비 문서 참고).
+    permissions:
+      contents: read     # Dockerfile·소스 체크아웃
+      id-token: write    # OIDC 토큰 '요청' 권한. 그 토큰이 뭘 할 수 있는지는 Azure의 subject 검증이 정한다
+
+    steps:
+      # ── 0. 실행 조건 ────────────────────────────────────────────────────────
+      # 잡 레벨 if로 걸면 조용히 skip돼서 "왜 아무 일도 안 일어나지"가 된다.
+      # 장애 대응 중에 처음 밟는 지뢰라 명시적으로 끊고 이유까지 알려준다.
+      # (이 레포의 기본 브랜치는 dev라 Run workflow 화면이 dev를 기본 선택한다 —
+      #  그대로 누르면 OIDC subject가 refs/heads/dev가 되어 로그인부터 실패한다.)
+      - name: main 브랜치인지 확인
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::배포는 main에서만 한다. Run workflow의 'Use workflow from'을 main으로 바꿀 것 (현재: ${GITHUB_REF})"
+            echo "Azure 페더레이션 자격증명이 repo:sktflyai-passion5/ZooEarly-BE:ref:refs/heads/main 에 묶여 있어 다른 브랜치에서는 로그인 자체가 되지 않는다"
+            exit 1
+          fi
+
+      - name: 체크아웃
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # ── 1. 무엇을 배포할지부터 정한다 ───────────────────────────────────────
+      - name: 배포 대상 결정
+        id: meta
+        env:
+          # 사람이 입력한 값을 ${{ }}로 run 본문에 박으면 셸이 그걸 '코드'로 읽는다.
+          # env로 넘겨 셸 변수로만 다룬다 — 이 파일의 모든 run 블록이 같은 규칙을 지킨다.
+          TAG_INPUT: ${{ github.event.inputs.image_tag }}
+        run: |
+          set -euo pipefail
+          TAG_INPUT="${TAG_INPUT:-}"
+
+          if [ -n "$TAG_INPUT" ]; then
+            # 문자열 '전체'를 검사한다. grep -E는 줄 단위라 여러 줄을 넣으면 한 줄만 맞아도 통과하고,
+            # 통과한 값이 뒤에서 태그·이미지 참조로 쓰이면서 명령 주입으로 이어진다.
+            # bash의 =~ 는 개행을 문자 클래스에 포함하지 않아 그 우회를 막는다.
+            if [[ ! "$TAG_INPUT" =~ ^[a-z0-9][a-z0-9._-]{0,39}$ ]]; then
+              echo "::error::image_tag 형식이 잘못됐다. 소문자·숫자로 시작하는 40자 이내 태그만 받는다 (예: sha-1a2b3c4, v1)"
+              exit 1
+            fi
+            TAG="$TAG_INPUT"
+            BUILD=false
+          else
+            # latest를 쓰지 않는 이유는 가이드 §5.9와 같다 — 지금 뭐가 떠 있는지 알아야 하고,
+            # 되돌릴 좌표가 남아야 한다. 문서의 v1/v2를 자동화로 흉내내려면 번호를 어딘가
+            # 저장해야 하는데 이 서버는 무상태 원칙이라, 커밋 SHA를 진실의 원천으로 삼았다.
+            TAG="sha-$(printf '%s' "$GITHUB_SHA" | cut -c1-7)"
+            BUILD=true
+          fi
+
+          # 리비전 접미사 — 포털의 리비전 목록에서 "어느 실행이 이 리비전이냐"가 바로 보인다.
+          # run_attempt까지 넣는 이유: 같은 이름의 리비전은 다시 만들 수 없어서,
+          # 실패한 배포를 Re-run 하면 이름이 겹쳐 배포 자체가 거부된다.
+          # 숫자로 시작하는 이름이 거부되므로 접두사 r을 두고, 끝의 '-'도 규칙상 잘라낸다.
+          SUFFIX="r${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-$(printf '%s' "$TAG" | tr 'A-Z' 'a-z' | sed 's/[^a-z0-9-]/-/g' | cut -c1-24 | sed 's/-*$//')"
+
+          {
+            echo "tag=${TAG}"
+            echo "build=${BUILD}"
+            echo "suffix=${SUFFIX}"
+            # 리비전 이름은 Azure에 되묻지 않고 여기서 확정한다.
+            # update 직후에 latestRevisionName을 읽으면 아직 '이전' 리비전이 돌아올 수 있고,
+            # 그러면 이미 Running인 옛 리비전을 보고 기동 성공으로 착각한다.
+            echo "revision=${AZ_CONTAINERAPP}--${SUFFIX}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "태그        : ${TAG}"
+          echo "새로 빌드   : ${BUILD}   (false면 롤백 실행이다)"
+          echo "리비전 이름 : ${AZ_CONTAINERAPP}--${SUFFIX}"
+
+      # ── 2. Azure 로그인 ─────────────────────────────────────────────────────
+      # 비밀번호를 저장하지 않는다. Actions가 받은 단기 토큰을 Azure가 검증하는데,
+      # 그 토큰은 이 레포의 main에서 실행될 때만 발급된다(페더레이션 subject 고정).
+      # 그래서 시크릿 3개는 전부 '식별자'일 뿐 비밀번호가 아니다 — 가이드 §5.10.
+      - name: Azure 로그인
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: containerapp 명령 준비
+        run: |
+          set -euo pipefail
+          # 최신 az에는 containerapp이 내장돼 있다. 이미 있으면 확장 설치를 아예 건드리지 않는다 —
+          # az extension add는 PyPI를 타서 간헐적으로 실패하는데, 그것 때문에 배포가 통째로 날아가면 아깝다.
+          if az containerapp --help >/dev/null 2>&1; then
+            echo "az에 containerapp 명령이 이미 있다 — 확장 설치를 건너뛴다"
+          else
+            # 비대화형 러너에서 설치 여부를 묻다 멈추는 것을 막는다
+            az config set extension.use_dynamic_install=yes_without_prompt --only-show-errors
+            for i in 1 2 3; do
+              az extension add --name containerapp --upgrade --only-show-errors && break || {
+                echo "확장 설치 실패 (${i}/3) — 10초 후 재시도"; sleep 10;
+              }
+            done
+            # 세 번 다 실패했으면 여기서 확실히 끊는다
+            az containerapp --help >/dev/null
+          fi
+
+      # ── 3. 이미지를 바꾸기 전에 앱 상태부터 확인한다 ────────────────────────
+      # 여기서 걸러내는 것들은 전부 "리비전을 하나 만들어 죽인 뒤에야 알게 되는" 문제들이다.
+      - name: 배포 전 점검 · 롤백 지점 확보
+        id: pre
+        run: |
+          set -euo pipefail
+
+          # -o none 이라 성공해도 아무것도 안 찍힌다. show의 전체 JSON에는 레지스트리 설정과
+          # 시크릿 참조 목록이 들어 있어 로그에 통째로 남기지 않는다.
+          if ! ERR=$(az containerapp show -n "$AZ_CONTAINERAPP" -g "$AZ_RESOURCE_GROUP" -o none 2>&1); then
+            echo "$ERR"
+            # 권한 부족과 리소스 없음은 둘 다 비영으로 떨어진다. 학생·게스트 구독에서 실제로 자주 나는 건
+            # 전자인데, 구분하지 않으면 "앱이 없으니 create해라"는 엉뚱한 안내를 하게 된다.
+            case "$ERR" in
+              *AuthorizationFailed*|*"does not have authorization"*|*Forbidden*)
+                echo "::error::권한이 부족하다. 이 신원에 zooearly-rg Reader + Container App Contributor가 붙어 있는지 확인할 것 (가이드 §5.10)" ;;
+              *)
+                echo "::error::Container App '${AZ_CONTAINERAPP}'을 찾지 못했다. 최초 생성은 az containerapp create로 사람이 한 번만 한다 — CD는 update만 한다 (가이드 §5.5)" ;;
+            esac
+            exit 1
+          fi
+
+          # 필요한 필드만 한 줄씩 뽑는다
+          PREV_IMAGE=$(az containerapp show -n "$AZ_CONTAINERAPP" -g "$AZ_RESOURCE_GROUP" \
+                         --query "properties.template.containers[0].image" -o tsv)
+          FQDN=$(az containerapp show -n "$AZ_CONTAINERAPP" -g "$AZ_RESOURCE_GROUP" \
+                   --query "properties.configuration.ingress.fqdn" -o tsv)
+          MODE=$(az containerapp show -n "$AZ_CONTAINERAPP" -g "$AZ_RESOURCE_GROUP" \
+                   --query "properties.configuration.activeRevisionsMode" -o tsv)
+          REGS=$(az containerapp show -n "$AZ_CONTAINERAPP" -g "$AZ_RESOURCE_GROUP" \
+                   --query "properties.configuration.registries[].server" -o tsv | tr '\n' ' ')
+
+          # (a) 단일 리비전 모드인가.
+          #     multiple이면 새 리비전이 0% 트래픽으로 만들어지고 FQDN은 계속 옛 리비전을 서비스한다.
+          #     이 워크플로는 트래픽을 옮기지 않으므로, 배포는 초록불인데 새 코드는 한 요청도 못 받는다.
+          MODE_LC=$(printf '%s' "$MODE" | tr 'A-Z' 'a-z')
+          if [ "$MODE_LC" != "single" ]; then
+            echo "::error::활성 리비전 모드가 '${MODE}'다. 이 워크플로는 트래픽을 옮기지 않으니 배포가 반영되지 않는다. az containerapp revision set-mode --mode single 로 바꾸거나 트래픽 전환을 워크플로에 추가할 것"
+            exit 1
+          fi
+
+          # (b) 앱이 우리 레지스트리에서 이미지를 당겨올 자격이 등록돼 있는가.
+          #     비어 있으면 새 리비전이 이미지 pull 실패로 죽는데, 로그에는 이미지 문제로만 보여
+          #     원인이 레지스트리 인증이라는 걸 알아채기 어렵다. 가이드 §5.5의 create 예시가
+          #     zooearlyacr(2408 없음)로 적혀 있어 실제로 어긋나 있을 수 있다.
+          case " $REGS " in
+            *" ${ACR_LOGIN_SERVER} "*)
+              echo "레지스트리 등록 확인: ${ACR_LOGIN_SERVER}" ;;
+            *)
+              echo "::error::앱에 ${ACR_LOGIN_SERVER} pull 자격이 없다(현재: ${REGS:-없음}). 배포 전에 한 번만: az containerapp registry set -n ${AZ_CONTAINERAPP} -g ${AZ_RESOURCE_GROUP} --server ${ACR_LOGIN_SERVER} --identity system"
+              exit 1 ;;
+          esac
+
+          {
+            echo "prev_image=${PREV_IMAGE}"
+            echo "fqdn=${FQDN}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "직전 이미지 : ${PREV_IMAGE}"
+          echo "주소        : https://${FQDN}"
+
+      # ── 4. 레지스트리 접근 ──────────────────────────────────────────────────
+      # 기본은 방금 받은 Azure 토큰을 그대로 쓴다 — 저장할 레지스트리 비밀번호가 없다.
+      # 폴백B(ACR admin 계정)는 시크릿 두 개가 다 있을 때만 켜진다.
+      # 판별에 if:를 걸지 않는 이유: 롤백 경로에서도 태그를 조회해야 해서 방식이 필요하다.
+      # 배포용 서비스 주체에 ACR 하나에 대한 AcrPush 롤만 붙여뒀다(가이드 §5.10).
+      # 그래서 별도 계정 없이 방금 받은 Azure 토큰으로 그대로 로그인된다 —
+      # 레지스트리 비밀번호를 GitHub에 저장할 이유가 없다.
+      - name: ACR 로그인
+        if: steps.meta.outputs.build == 'true'
+        run: |
+          set -euo pipefail
+          az acr login --name "$ACR_NAME" --only-show-errors
+
+      - name: 이미지 빌드 · 푸시
+        if: steps.meta.outputs.build == 'true'
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          IMAGE="${ACR_LOGIN_SERVER}/${IMAGE_REPO}:${TAG}"
+          # Container Apps는 amd64로 돈다. 러너가 바뀌어도 결과가 흔들리지 않게 못박는다.
+          docker build --platform linux/amd64 -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "푸시 완료: ${IMAGE}"
+
+      # ── 5. 배포 좌표를 digest로 고정한다 ────────────────────────────────────
+      # ACR 태그는 덮어쓸 수 있다. 태그만 가리키고 배포하면
+      #   (a) 테스트를 통과한 그 이미지가 실제로 뜬다는 보장이 없고,
+      #   (b) 롤백 대상 태그가 조용히 재지정되면 되돌리기 자체가 거짓말이 된다.
+      # digest는 내용이 바뀌면 값도 바뀌므로 "그때 그 이미지"를 정확히 가리킨다.
+      # 롤백 경로에서는 이 조회가 '태그가 진짜 있는지' 확인도 겸한다 —
+      # 없는 태그로 update하면 리비전이 만들어졌다가 pull 실패로 죽어서 앱이 내려간다.
+      - name: 배포할 이미지 digest 확인
+        id: image
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          DIGEST=$(az acr repository show -n "$ACR_NAME" --image "${IMAGE_REPO}:${TAG}" --query digest -o tsv --only-show-errors) || DIGEST=""
+
+          if [ -z "$DIGEST" ]; then
+            echo "::error::ACR에서 ${IMAGE_REPO}:${TAG} 를 찾지 못했다. 쓸 수 있는 태그는 아래 목록"
+            az acr repository show-tags -n "$ACR_NAME" --repository "$IMAGE_REPO" --orderby time_desc --top 15 -o tsv || true
+            exit 1
+          fi
+
+          echo "image=${ACR_LOGIN_SERVER}/${IMAGE_REPO}@${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "배포 좌표: ${ACR_LOGIN_SERVER}/${IMAGE_REPO}@${DIGEST}  (태그 ${TAG})"
+
+      # ── 6. 배포 ─────────────────────────────────────────────────────────────
+      - name: Container Apps 배포
+        id: deploy
+        env:
+          IMAGE: ${{ steps.image.outputs.image }}
+          SUFFIX: ${{ steps.meta.outputs.suffix }}
+        run: |
+          set -euo pipefail
+          # ★ --set-env-vars / --secrets 를 의도적으로 넘기지 않는다.
+          #   update는 지정하지 않은 설정을 그대로 유지한다. INFERENCE_BASE_URL·CORS_ALLOWED_ORIGINS·
+          #   inference-api-key는 사람이 Azure 쪽에 넣어둔 값이고(가이드 §5.6, §5.11-1),
+          #   여기서 같이 주면 그 구성을 덮어쓴다. CD가 바꾸는 것은 '어느 이미지를 띄우는가' 하나뿐이다.
+          #   --cpu/--memory/--replicas도 같은 이유로 넣지 않는다 — create 시점의 값이 그대로 유지된다.
+          #
+          #   솔직히 적어둔다: 이 워크플로는 그 비밀값을 '다루지 않지만', 배포 신원은 Container App에
+          #   Contributor라 az containerapp secret list 로 '읽을 수는' 있다. 두 얘기는 다르다.
+          #   신원조차 못 읽게 하려면 Key Vault 참조로 옮겨야 한다.
+          az containerapp update \
+            -n "$AZ_CONTAINERAPP" -g "$AZ_RESOURCE_GROUP" \
+            --image "$IMAGE" \
+            --revision-suffix "$SUFFIX" \
+            --only-show-errors -o none
+          echo "deployed=true" >> "$GITHUB_OUTPUT"
+          echo "배포 요청 완료"
+
+      # update는 "요청이 접수됐다"까지만 기다린다. 여기서 안 기다리면 아래 스모크가
+      # 아직 트래픽을 받고 있는 '옛 리비전'을 때려서 통과해버린다 — 새 이미지가 아예 안 떠도 초록불이 된다.
+      - name: 새 리비전 기동 대기
+        env:
+          REV: ${{ steps.meta.outputs.revision }}
+        run: |
+          set -euo pipefail
+          SEEN=""      # 상태를 한 번이라도 읽었는가
+          DEG=0        # Degraded 연속 관측 횟수
+
+          # 리비전이 만들어지기 전에 조회하면 에러가 나므로 한 박자 쉬고 시작한다
+          sleep 10
+
+          for i in $(seq 1 30); do
+            STATE=$(az containerapp revision show -n "$AZ_CONTAINERAPP" -g "$AZ_RESOURCE_GROUP" \
+                      --revision "$REV" --query "properties.runningState" -o tsv 2>/dev/null) || STATE=""
+            if [ -n "$STATE" ]; then SEEN="yes"; fi
+            echo "[$i/30] ${REV} = ${STATE:-조회 전}"
+
+            case "$STATE" in
+              Running|RunningAtMaxScale)
+                echo "리비전 기동 완료"
+                exit 0 ;;
+              Failed)
+                echo "::error::리비전이 Failed 상태다 (이미지 pull 실패나 기동 중 예외를 의심한다)"
+                exit 1 ;;
+              Degraded)
+                # 헬스 프로브가 TCP뿐이라(가이드 §5.8) Spring이 8080을 잡기 전 잠깐 Degraded로 보일 수 있다.
+                # 첫 관측만으로 끊으면 멀쩡한 배포가 실패 판정되고 자동 롤백까지 돌아 리비전만 늘어난다.
+                DEG=$((DEG + 1))
+                if [ "$DEG" -ge 3 ]; then
+                  echo "::error::리비전이 30초 넘게 Degraded다"
+                  exit 1
+                fi ;;
+              *)
+                DEG=0 ;;
+            esac
+            sleep 10
+          done
+
+          # 상태를 한 번도 못 읽었다면 CLI/API 쪽 사정이지 배포 실패의 증거가 아니다.
+          # 판정을 스모크에 넘긴다 — 그쪽은 실제 응답을 본다.
+          if [ -z "$SEEN" ]; then
+            echo "::warning::리비전 상태를 읽지 못했다(이름이 다를 수 있다). 아래 목록과 스모크 결과로 판정한다"
+            az containerapp revision list -n "$AZ_CONTAINERAPP" -g "$AZ_RESOURCE_GROUP" \
+              --query "[].{name:name, created:properties.createdTime}" -o table || true
+            exit 0
+          fi
+          echo "::error::5분 안에 Running이 되지 않았다"
+          exit 1
+
+      # ── 7. 스모크 확인 ──────────────────────────────────────────────────────
+      # tools/smoke-test.sh를 그대로 돌리지 않는다. 6개 중 4개는 목 서버 전용 토큰이고,
+      # 지금 INFERENCE_BASE_URL이 임시값이라 추론이 필요한 요청은 502가 나는 게 정상이다(가이드 §5.12).
+      # 그 빨간 줄을 게이트로 삼으면 멀쩡한 배포가 매번 실패한다.
+      #
+      # 대신 '검증실패(400)' 하나만 본다. {"language":"KOREAN"}은 text가 없어서
+      # AiRelayService.tts()가 FastAPI를 부르기 전에 BusinessException으로 끊는다.
+      # 즉 FastAPI가 죽어 있든 말든 결과가 같고, "컨테이너가 떴고 라우팅·검증·에러 핸들러가 살아있다"만
+      # 정확히 증명한다. Origin 헤더를 붙이지 않으므로 CORS 설정과도 무관하다.
+      - name: 스모크 — 게이트웨이가 계약대로 응답하는가
+        env:
+          FQDN: ${{ steps.pre.outputs.fqdn }}
+        run: |
+          set -uo pipefail
+          URL="https://${FQDN}/api/v1/ai/tts"
+          for i in $(seq 1 12); do
+            # 연결 실패면 curl이 스스로 000을 찍고 비영으로 끝난다. || echo 로 한 줄 더 붙이면
+            # CODE가 '000\n000'이 되어 로그만 헷갈려지므로 대입으로 덮어쓴다.
+            CODE=$(curl -sS -m 20 -o /tmp/smoke-body.json -w '%{http_code}' \
+                     -X POST "$URL" -H 'Content-Type: application/json' \
+                     -d '{"language":"KOREAN"}') || CODE=000
+            if [ "$CODE" = "400" ] && grep -q 'INVALID_PARAMETER' /tmp/smoke-body.json 2>/dev/null; then
+              echo "스모크 통과 (${i}회차) — 400 INVALID_PARAMETER"
+              exit 0
+            fi
+            echo "[$i/12] 아직 아님 (status=${CODE}) — 10초 후 재시도"
+            sleep 10
+          done
+          echo "::error::스모크 실패 — 새 리비전이 400 INVALID_PARAMETER로 답하지 않는다"
+          echo "마지막 응답: $(head -c 500 /tmp/smoke-body.json 2>/dev/null || true)"
+          exit 1
+
+      # ── 8. 실패했을 때 ──────────────────────────────────────────────────────
+      # 되돌리기 전에 원인을 남긴다. 서버를 원복해도 Actions 로그에는 근거가 남아야 한다.
+      # 로그 줄 수를 짧게 두는 이유: 이 서버는 아이 음성 요청을 중계하고
+      # Actions 로그는 레포 읽기 권한자 전원에게 90일 보인다. 원인 파악에 필요한 만큼만 찍는다.
+      - name: 실패 진단
+        if: failure() && steps.deploy.outputs.deployed == 'true'
+        continue-on-error: true
+        env:
+          REV: ${{ steps.meta.outputs.revision }}
+        run: |
+          echo "===== 리비전 상태 (이미지 pull 실패는 여기서 드러난다) ====="
+          az containerapp revision show -n "$AZ_CONTAINERAPP" -g "$AZ_RESOURCE_GROUP" --revision "$REV" \
+            --query "{state:properties.runningState, provision:properties.provisioningState, replicas:properties.replicas, image:properties.template.containers[0].image}" \
+            -o yaml || true
+          echo "===== 플랫폼 이벤트 ====="
+          az containerapp logs show -n "$AZ_CONTAINERAPP" -g "$AZ_RESOURCE_GROUP" \
+            --revision "$REV" --type system --tail 30 || true
+          echo "===== 애플리케이션 로그 ====="
+          az containerapp logs show -n "$AZ_CONTAINERAPP" -g "$AZ_RESOURCE_GROUP" \
+            --revision "$REV" --type console --tail 30 || true
+
+      # 되돌린다 = 이전 이미지로 다시 update한다 (단일 리비전 모드라 이게 곧 롤백이다).
+      # 조건을 좁게 잡은 이유가 셋 있다:
+      #   - deployed == 'true' : 테스트·빌드에서 깨졌으면 서버는 손도 안 댔다. 되돌릴 것이 없다
+      #   - build == 'true'    : 사람이 손으로 고른 롤백까지 자동으로 되돌리면,
+      #                          탈출하려던 바로 그 이미지를 워크플로가 도로 복구해 놓는다
+      #   - 우리 이미지인가     : 직전이 quickstart 플레이스홀더면 되돌리기가 데모 페이지를 띄운다
+      - name: 실패 시 직전 이미지로 되돌리기
+        if: failure() && steps.deploy.outputs.deployed == 'true' && steps.meta.outputs.build == 'true'
+        env:
+          PREV_IMAGE: ${{ steps.pre.outputs.prev_image }}
+          NEW_IMAGE: ${{ steps.image.outputs.image }}
+          FQDN: ${{ steps.pre.outputs.fqdn }}
+        run: |
+          set -uo pipefail
+          if [ -z "${PREV_IMAGE:-}" ] || [ "$PREV_IMAGE" = "$NEW_IMAGE" ]; then
+            echo "::warning::되돌릴 이전 이미지가 없거나 방금 배포한 것과 같다(${PREV_IMAGE:-없음}). 손으로 확인해야 한다"
+            exit 0
+          fi
+          case "$PREV_IMAGE" in
+            "${ACR_LOGIN_SERVER}/${IMAGE_REPO}:"*|"${ACR_LOGIN_SERVER}/${IMAGE_REPO}@"*) ;;
+            *)
+              echo "::warning::직전 이미지가 게이트웨이 이미지가 아니다(${PREV_IMAGE}). 되돌리지 않고 그대로 둔다 — 손으로 확인할 것"
+              exit 0 ;;
+          esac
+
+          echo "::warning::되돌리는 중 → ${PREV_IMAGE}"
+          if ! az containerapp update -n "$AZ_CONTAINERAPP" -g "$AZ_RESOURCE_GROUP" \
+                 --image "$PREV_IMAGE" \
+                 --revision-suffix "rb${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}" \
+                 --only-show-errors -o none; then
+            echo "::error::되돌리기도 실패했다. 손으로 조치할 것: az containerapp update -n ${AZ_CONTAINERAPP} -g ${AZ_RESOURCE_GROUP} --image ${PREV_IMAGE}"
+            exit 0
+          fi
+
+          # 되돌리기가 접수됐다는 것과 서버가 살아났다는 것은 다르다. 짧게 다시 확인한다.
+          for i in 1 2 3 4 5 6; do
+            sleep 15
+            CODE=$(curl -sS -m 20 -o /tmp/rb-body.json -w '%{http_code}' \
+                     -X POST "https://${FQDN}/api/v1/ai/tts" -H 'Content-Type: application/json' \
+                     -d '{"language":"KOREAN"}') || CODE=000
+            if [ "$CODE" = "400" ] && grep -q 'INVALID_PARAMETER' /tmp/rb-body.json 2>/dev/null; then
+              echo "되돌리기 확인 완료 — 서버에는 이전 버전이 정상으로 떠 있다"
+              exit 0
+            fi
+            echo "[$i/6] 되돌린 리비전 대기 중 (status=${CODE})"
+          done
+          echo "::error::되돌렸지만 응답을 확인하지 못했다. 사람이 직접 확인해야 한다"
+
+      # ── 9. 한 눈에 보는 결과 ────────────────────────────────────────────────
+      # "지금 뭐가 떠 있고, 되돌리려면 뭘 하면 되는지"를 실행 화면에 남긴다.
+      # 발표 중에는 이 표 하나만 보면 되도록 한다.
+      - name: 요약
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          BUILD: ${{ steps.meta.outputs.build }}
+          DIGEST: ${{ steps.image.outputs.digest }}
+          REV: ${{ steps.meta.outputs.revision }}
+          PREV_IMAGE: ${{ steps.pre.outputs.prev_image }}
+          FQDN: ${{ steps.pre.outputs.fqdn }}
+        run: |
+          {
+            echo "## 배포 결과: ${RESULT}"
+            echo ""
+            echo "| 항목 | 값 |"
+            echo "|---|---|"
+            echo "| 이미지 태그 | \`${TAG:--}\` |"
+            echo "| digest | \`${DIGEST:--}\` |"
+            echo "| 리비전 | \`${REV:--}\` |"
+            echo "| 직전 이미지 | \`${PREV_IMAGE:--}\` |"
+            echo "| 커밋 | \`${GITHUB_SHA}\` |"
+            echo "| 주소 | ${FQDN:+https://$FQDN/api/v1} |"
+            echo "| 새로 빌드 | ${BUILD:--} |"
+            if [ "${BUILD:-}" = "false" ]; then
+              echo ""
+              echo "> 이 실행은 **테스트를 건너뛴 롤백**이다. 과거 이미지를 그대로 다시 띄웠다."
+            fi
+            echo ""
+            echo "### 되돌리려면"
+            echo "Actions → deploy → Run workflow → **브랜치를 main으로** 고르고 \`image_tag\`에 위 '직전 이미지'의 태그(\`:\` 뒤)를 넣는다."
+            echo ""
+            echo "az가 손에 있으면 이 한 줄도 같다:"
+            echo '```bash'
+            echo "az containerapp update -n ${AZ_CONTAINERAPP} -g ${AZ_RESOURCE_GROUP} --image ${PREV_IMAGE:-<이전 이미지>}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
