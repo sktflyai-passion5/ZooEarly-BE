@@ -347,40 +347,51 @@ class AiErrorContractTest {
     @Test
     @DisplayName("pronunciation: 오디오를 STT 없이 그대로 릴레이한다")
     void pronunciationRelaysAudioDirectly() throws Exception {
-        String body = "{\"success\":true,\"data\":{\"targetWord\":\"만나서\"}}";
+        String body = "{\"success\":true,\"data\":{\"targetWord\":\"지내자\"}}";
         given(inferenceClient.postMultipart(anyString(), any())).willReturn(body);
 
         mvc.perform(multipart(PRONUNCIATION).file(audio("a.m4a", 100))
-                        .param("targetSentence", "안녕! 나도 만나서 반가워"))
+                        .param("sentenceId", "arrival_2"))
                 .andExpect(status().isOk())
                 .andExpect(content().json(body));
 
         ArgumentCaptor<MultiValueMap<String, Object>> captor = ArgumentCaptor.forClass(MultiValueMap.class);
         verify(inferenceClient).postMultipart(anyString(), captor.capture());
-        assertThat(captor.getValue().getFirst("targetSentence")).isEqualTo("안녕! 나도 만나서 반가워");
+        assertThat(captor.getValue().getFirst("sentenceId")).isEqualTo("arrival_2");
         assertThat(captor.getValue().containsKey("audio")).isTrue();
     }
 
     @Test
-    @DisplayName("pronunciation: targetSentence 누락 → 400 + field=targetSentence")
-    void pronunciationRequiresTargetSentence() throws Exception {
+    @DisplayName("pronunciation: sentenceId 누락 → 400 + field=sentenceId")
+    void pronunciationRequiresSentenceId() throws Exception {
         mvc.perform(multipart(PRONUNCIATION).file(audio("a.m4a", 100)))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.error.field").value("targetSentence"));
+                .andExpect(jsonPath("$.error.field").value("sentenceId"));
     }
 
     @Test
     @DisplayName("pronunciation: 오디오 검증은 다른 엔드포인트와 동일하다")
     void pronunciationValidatesAudio() throws Exception {
         mvc.perform(multipart(PRONUNCIATION).file(audio("voice.mp3", 100))
-                        .param("targetSentence", "안녕"))
+                        .param("sentenceId", "arrival_1"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("UNSUPPORTED_AUDIO_FORMAT"));
 
         mvc.perform(multipart(PRONUNCIATION).file(audio("big.m4a", 10 * 1024 * 1024 + 1))
-                        .param("targetSentence", "안녕"))
+                        .param("sentenceId", "arrival_1"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.error.code").value("AUDIO_TOO_LARGE"));
+    }
+
+    @Test
+    @DisplayName("sentences: FastAPI 응답을 body 없이 그대로 GET 릴레이한다")
+    void sentencesRelaysGetRequest() throws Exception {
+        String body = "[{\"sentenceId\":\"arrival_1\",\"category\":\"arrival\",\"text\":\"안녕 나도 만나서 반가워 !\"}]";
+        given(inferenceClient.get(anyString())).willReturn(body);
+
+        mvc.perform(get("/api/v1/ai/pronunciation/sentences"))
+                .andExpect(status().isOk())
+                .andExpect(content().json(body));
     }
 
     @Test

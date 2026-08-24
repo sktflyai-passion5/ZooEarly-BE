@@ -2,6 +2,7 @@ package com.zooearly.ai;
 
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -59,8 +60,14 @@ public class AiController {
     @PostMapping(value = "/pronunciation", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<String> pronunciation(
             @RequestPart("audio") MultipartFile audio,
-            @RequestParam("targetSentence") String targetSentence) {
-        return json(relayService.pronunciation(audio, targetSentence));
+            @RequestParam("sentenceId") String sentenceId) {
+        return json(relayService.pronunciation(audio, sentenceId));
+    }
+
+    /** §6-1 발음 연습 문장 9개 조회 — "표현 고르기" 화면의 선택지가 여기서 온다 */
+    @GetMapping("/pronunciation/sentences")
+    public ResponseEntity<String> sentences() {
+        return json(relayService.sentences());
     }
 
     /** §5 발화 피드백 생성 */

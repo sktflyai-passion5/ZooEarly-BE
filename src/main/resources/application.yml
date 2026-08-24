@@ -27,6 +27,7 @@ inference:
     tts: ${INFERENCE_PATH_TTS:/internal/v1/speech/synthesize}
     feedback: ${INFERENCE_PATH_FEEDBACK:/internal/v1/feedback/expression}
     pronunciation: ${INFERENCE_PATH_PRONUNCIATION:/internal/v1/feedback/speaking}
+    sentences: ${INFERENCE_PATH_SENTENCES:/internal/v1/feedback/sentences}
   timeout:
     connect-seconds: 3         # 명세 §0.4
     read-seconds: 15           # stt / tts / feedback
