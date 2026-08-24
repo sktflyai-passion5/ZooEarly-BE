@@ -88,6 +88,10 @@ FastAPI 명세(`zooearly-fastapi-spec.md`)와 대조한 결과다.
 > | `/feedback/speaking` | `audio`, `sentenceId` | `audio_file`, `sentence_id` | **422** |
 > | `/feedback/expression` | — | 경로 자체가 없음 | **502** |
 > | `/feedback/sentences` | — (GET) | — | **200** ✅ |
+> | `/story/generate` | `childName`, `partnerLine`, `poemText` … | `child_name`, `partner_line`, `poem_text` … | **422** |
+>
+> `/story/generate`는 **snake_case로 보내면 200이 나오고 동화가 실제로 생성된다.**
+> 즉 로직은 멀쩡하고 필드명만 안 맞는다.
 >
 > 유일하게 통하는 건 문장 목록뿐이고, 그마저 응답이 봉투 없는 배열 + `snake_case`라
 > 앱이 못 읽는다.
@@ -387,10 +391,19 @@ body 없음, 인증 헤더 없음. 게이트웨이는 이 요청을 그대로 �
 }
 ```
 
+> ### ⚠️ 이 형태는 현재 FastAPI가 못 받는다 (2026-08-24 실측)
+>
+> 위 body를 그대로 보내면 `422 child_name Field required`가 난다.
+> 같은 body를 snake_case로 바꾸면 `200`이고 동화가 정상 생성된다.
+> **표 9번(camelCase 수용)에 응해주거나, 아니면 게이트웨이가 변환해야 한다.**
+
 **★ 필드명이 camelCase다.** FastAPI 명세(`zooearly-fastapi-spec.md` §7)의 예시는
 `child_name`·`partner_line`·`child_said`·`poem_text`·`practiced_word`인데,
 **실제로는 위처럼 도착한다.** `sentenceId`와 같은 상황이다 — 게이트웨이가 앱 body를
 가공 없이 통과시키기 때문이고, 앱 계약이 camelCase다.
+
+⚠️ 다만 **`sentenceId`는 실측에서 422로 실패한 케이스다**(§1-1 표). 선례로 들기에 적절하지 않다 —
+`/story`도 같은 이유로 422다. 요청 필드명 정렬은 아직 어느 쪽도 끝나지 않았다.
 
 게이트웨이가 **먼저 걸러서 400으로 끊는 것들** (여기까지 오지 않는다):
 
