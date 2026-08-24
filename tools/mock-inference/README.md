@@ -31,6 +31,31 @@ set INFERENCE_BASE_URL=http://localhost:9000     REM Windows
 export INFERENCE_BASE_URL=http://localhost:9000  # Mac/Linux
 ```
 
+### 게이트웨이를 Docker로 띄웠다면 ⚠️
+
+**컨테이너 안에서 `localhost`는 컨테이너 자기 자신이다.** 목 서버는 내 PC에 떠 있으므로
+`localhost:8000`으로 주면 목 서버가 멀쩡해도 **전부 `502 AI_SERVER_ERROR`가 난다.**
+
+```bash
+docker run --rm -p 8080:8080 \
+  -e INFERENCE_BASE_URL=http://host.docker.internal:8000 \
+  zooearly-gateway:local
+```
+
+`host.docker.internal`이 컨테이너에서 호스트(내 PC)를 가리키는 주소다. 로컬 개발에서만 쓰고,
+배포된 환경에는 진짜 FastAPI 주소가 들어간다.
+
+### 한 번에 확인하기
+
+아래 "에러 화면 테스트"의 시나리오를 매번 손으로 치는 대신 스크립트로 돌릴 수 있다.
+
+```bash
+./tools/smoke-test.sh                        # localhost:8080
+./tools/smoke-test.sh http://localhost:18080 # 포트를 바꿨다면
+```
+
+정상 200과 에러 4종(422/429/502/504), 검증 실패(400)까지 6개를 한 번에 확인한다.
+
 살아있는지 확인:
 
 ```bash

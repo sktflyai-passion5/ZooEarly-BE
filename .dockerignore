@@ -1,0 +1,26 @@
+# 빌드 컨텍스트에서 뺄 것들.
+# 여기 안 적으면 docker build가 이 파일들을 전부 데몬으로 전송해서 느려지고,
+# 최악의 경우 로컬 빌드 산출물이 이미지에 섞여 들어간다.
+
+build/
+.gradle/
+bin/
+out/
+
+.git/
+.github/
+.gitattributes
+
+# 문서·개발 도구는 실행에 필요 없다
+docs/
+tools/
+*.md
+
+.idea/
+.vscode/
+*.iml
+
+# 혹시라도 로컬 환경파일이 이미지에 들어가는 사고를 막는다 — 비밀값은 배포 시 환경변수로만 주입한다
+.env
+.env.*
+*.pem
