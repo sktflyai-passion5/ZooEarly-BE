@@ -15,6 +15,19 @@ spring:
       max-file-size: 12MB
       max-request-size: 15MB
 
+springdoc:
+  # 화면이 읽는 명세는 사람이 쓴 docs/zooearly-ai-openapi.yaml 이다.
+  # 코드에서 자동 생성한 것을 쓰지 않는 이유: 컨트롤러가 body를 String으로 통과시키는
+  # 구조라 자동 생성하면 요청·응답 스키마가 텅 빈 문서가 나온다.
+  #
+  # 그렇다고 api-docs.enabled=false 로 끄면 안 된다 — springdoc 자동설정 전체가
+  # 조건부라서, 그걸 끄면 Swagger UI까지 같이 사라지고 /docs 가 404가 된다.
+  # (실제로 그렇게 넣었다가 404를 봤다.) 자동 생성물은 그냥 두고 UI만 우리 파일을 보게 한다.
+  swagger-ui:
+    path: /docs                 # FastAPI(/docs)와 같은 자리에 둔다. 팀이 헷갈리지 않게
+    url: /openapi.yaml          # build가 docs/에서 복사해 넣는 파일
+    disable-swagger-default-url: true
+
 logging:
   level:
     # 요청 한 건당 한 줄. 앱을 붙여놓고 통신이 실제로 오는지 눈으로 보려는 것이다.
