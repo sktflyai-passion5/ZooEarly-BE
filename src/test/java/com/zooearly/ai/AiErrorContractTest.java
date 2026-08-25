@@ -502,6 +502,21 @@ class AiErrorContractTest {
     }
 
     @Test
+    @DisplayName("없는 경로는 404다 — 500이면 서버가 고장난 걸로 오해받는다")
+    void unmappedPathReturns404() throws Exception {
+        // 실제로 이것 때문에 오진이 있었다: 접두사를 뺀 /ai/stt 가 500을 주자
+        // "게이트웨이가 라우팅 전에 죽는다"고 판단됐다. 500은 그렇게 읽히는 게 맞다.
+        mvc.perform(get("/ai/stt"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.error.code").value("NOT_FOUND"));
+
+        mvc.perform(get("/health"))
+                .andExpect(status().isNotFound());
+
+        org.mockito.Mockito.verifyNoInteractions(inferenceClient);
+    }
+
+    @Test
     @DisplayName("stt는 전용 타임아웃 클라이언트를 쓴다 — 기본(15초)으로 나가면 504가 난다")
     void sttUsesDedicatedTimeoutClient() throws Exception {
         given(inferenceClient.postMultipartStt(anyString(), any())).willReturn("{\"success\":true}");
