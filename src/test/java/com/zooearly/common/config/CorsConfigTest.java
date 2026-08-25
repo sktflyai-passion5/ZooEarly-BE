@@ -1,5 +1,6 @@
 package com.zooearly.common.config;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -44,6 +45,14 @@ class CorsConfigTest {
                             .header("Access-Control-Request-Method", "POST")
                             .header("Access-Control-Request-Headers", "content-type"))
                     .andExpect(status().isOk())
+                    .andExpect(header().string("Access-Control-Allow-Origin", ORIGIN));
+        }
+
+        @Test
+        @DisplayName("없는 경로의 404에도 CORS 헤더가 붙는다 — 없으면 브라우저가 404를 감춘다")
+        void corsHeaderOnNotFoundToo() throws Exception {
+            mockMvc.perform(get("/ai/story").header("Origin", ORIGIN))
+                    .andExpect(status().isNotFound())
                     .andExpect(header().string("Access-Control-Allow-Origin", ORIGIN));
         }
 
