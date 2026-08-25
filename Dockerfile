@@ -13,6 +13,9 @@ COPY build.gradle settings.gradle ./
 RUN gradle dependencies --no-daemon || true
 
 COPY src ./src
+# Swagger UI(/docs)가 읽는 명세. processResources가 static/openapi.yaml 로 옮긴다.
+# 빠뜨리면 화면은 뜨는데 명세를 못 읽는다.
+COPY docs/zooearly-ai-openapi.yaml ./docs/
 # 테스트는 CI(GitHub Actions)에서 이미 돌렸다. 여기서 또 돌리면 배포만 느려진다.
 RUN gradle bootJar --no-daemon -x test
 
