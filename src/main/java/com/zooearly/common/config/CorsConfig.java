@@ -35,7 +35,12 @@ public class CorsConfig implements WebMvcConfigurer {
         if (allowedOrigins.length == 0) {
             return;
         }
-        registry.addMapping("/api/v1/**")
+        // "/**" 로 두는 이유 — 실제로 진단을 가로막았다(2026-08-25).
+        // 프론트가 접두사를 빠뜨려 /ai/story 를 부르자 게이트웨이는 404를 줬는데,
+        // 그 경로엔 CORS 헤더가 안 붙어서 브라우저가 404를 감추고 "CORS 에러"만 보여줬다.
+        // 원인이 주소 오타인데 CORS 설정 문제로 오해하게 된다.
+        // 에러 응답에도 헤더가 붙어야 브라우저가 진짜 상태코드를 보여준다.
+        registry.addMapping("/**")
                 .allowedOrigins(allowedOrigins)
                 .allowedMethods("GET", "POST", "OPTIONS")
                 .allowedHeaders("*")
