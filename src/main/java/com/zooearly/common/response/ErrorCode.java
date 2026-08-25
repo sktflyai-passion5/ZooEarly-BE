@@ -14,6 +14,7 @@ public enum ErrorCode {
     PAYLOAD_TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "요청 전체 용량이 초과되었습니다."),
     AI_SERVER_ERROR(HttpStatus.BAD_GATEWAY, "추론 서버가 응답하지 않습니다."),
     AI_TIMEOUT(HttpStatus.GATEWAY_TIMEOUT, "추론 시간이 초과되었습니다."),
+    NOT_FOUND(HttpStatus.NOT_FOUND, "요청하신 주소가 없습니다."),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "게이트웨이 내부 오류입니다.");
 
     private final HttpStatus status;

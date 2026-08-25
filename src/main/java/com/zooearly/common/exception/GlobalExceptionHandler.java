@@ -12,6 +12,7 @@ import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
@@ -101,6 +102,23 @@ public class GlobalExceptionHandler {
     }
 
     /** 그 외 전부 → INTERNAL_ERROR(500). 여기에 찍히면 게이트웨이 버그로 보고 조사한다 */
+    /**
+     * 매핑 없는 경로 — 404로 답한다.
+     *
+     * 이게 없으면 아래 Exception 핸들러가 받아 500 INTERNAL_ERROR가 나간다.
+     * 실제로 그것 때문에 오진이 있었다(2026-08-25): FastAPI 담당자가 접두사를 빼고
+     * /ai/stt 로 찔러보고는 "모든 경로가 500이니 게이트웨이가 라우팅 전에 죽는다"고
+     * 판단했다. 500은 "서버가 고장났다"는 뜻이라 그 추론이 옳았고, 틀린 건 우리 응답이었다.
+     *
+     * 주소를 잘못 부른 것은 부르는 쪽 문제다 — 서버 고장으로 보이게 하면 안 된다.
+     */
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ApiResponse<Void>> handleNotFound(NoResourceFoundException e) {
+        log.warn("no mapping for {}", e.getResourcePath());
+        return ResponseEntity.status(ErrorCode.NOT_FOUND.status())
+                .body(ApiResponse.error(ErrorCode.NOT_FOUND, null));
+    }
+
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleUnknown(Exception e) {
         log.error("unhandled gateway error", e);
