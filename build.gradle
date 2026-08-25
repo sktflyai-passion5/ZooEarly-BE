@@ -20,10 +20,29 @@ repositories {
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // Swagger UI. 코드에서 명세를 자동 생성하지는 않는다 —
+    // 컨트롤러가 ResponseEntity<String>이라 자동 생성하면 스키마가 텅 빈 문서가 나온다.
+    // 대신 사람이 쓴 docs/zooearly-ai-openapi.yaml 을 그대로 띄운다 (아래 copyOpenApiSpec).
+    implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.13'
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+/**
+ * docs/ 의 명세를 리소스에 함께 담는다 — /docs 화면이 이걸 읽는다.
+ *
+ * 파일을 두 벌 두고 손으로 맞추면 반드시 어긋난다. docs/ 것만 고치고 빌드가 옮기게 한다.
+ * 별도 Copy 태스크가 아니라 processResources 안에서 처리하는 이유는,
+ * 같은 출력 디렉터리에 다른 태스크가 끼어들면 Gradle이 실행 순서를 보장하지 못해서다.
+ */
+processResources {
+    from('docs/zooearly-ai-openapi.yaml') {
+        into 'static'
+        rename { 'openapi.yaml' }
+    }
 }
