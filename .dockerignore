@@ -16,6 +16,11 @@ docs/
 tools/
 *.md
 
+# 단 하나 예외 — 이 명세 파일은 /docs(Swagger UI) 화면이 읽는다.
+# 빌드가 static/openapi.yaml 로 복사한다(build.gradle의 processResources).
+# 이걸 빼면 화면은 뜨는데 명세를 못 읽어 빈 페이지가 된다 — 실제로 그렇게 배포됐었다.
+!docs/zooearly-ai-openapi.yaml
+
 .idea/
 .vscode/
 *.iml
