@@ -14,8 +14,16 @@ info:
     - 어떤 에러도 아이 화면에 "오류"로 표시하지 않는다. 전부 "괜찮아, 다시 해볼까?"로 폴백한다.
 
 servers:
-  - url: https://zooearly.app/api/v1
-    description: Production Gateway
+  # ★ 아래 주소에 /api/v1 이 포함돼 있다. paths 는 그 뒤에 붙는 부분만 적은 것이다.
+  #   예) /ai/story  ->  https://<호스트>/api/v1/ai/story
+  #
+  #   앱의 base URL 을 /api/v1 없이 호스트까지만 넣으면 전부 404다.
+  #   실제로 그 사고가 있었다(2026-08-25) — paths 의 /ai/... 만 보고
+  #   base URL 을 호스트로만 설정해서 모든 호출이 404·CORS 에러로 보였다.
+  - url: https://zooearly-gateway.politesmoke-47da854d.japaneast.azurecontainerapps.io/api/v1
+    description: 배포된 게이트웨이 (Azure Container Apps, japaneast)
+  - url: http://localhost:8080/api/v1
+    description: 로컬 개발 (gradlew bootRun)
 
 tags:
   - name: AI
